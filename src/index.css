@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-sans: "Public Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  code, pre, kbd {
+    font-family: var(--font-mono);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes handrawina-ken-burns {
+  0% {
+    transform: scale(1.01) translate3d(0%, 0%, 0);
+  }
+  50% {
+    transform: scale(1.055) translate3d(-0.8%, -0.6%, 0);
+  }
+  100% {
+    transform: scale(1.02) translate3d(0.6%, 0.4%, 0);
+  }
+}
+
+.handrawina-cinematic-drift {
+  animation: handrawina-ken-burns 42s ease-in-out infinite alternate;
+}
+
+/* Subtle luxury scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(214, 184, 128, 0.25) transparent;
+}
+
+/* Mermaid SVG clean sizing */
+.mermaid-canvas svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  font-family: "Public Sans", system-ui, sans-serif !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handrawina-cinematic-drift {
+    animation: none !important;
+  }
+
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

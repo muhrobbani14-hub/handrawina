@@ -58,6 +58,16 @@ import {
 import type { JoinBarcodeMode, MintedJoinToken } from '../components/app/JoinBarcodeModal';
 
 const ECDH_STORAGE_PREFIX = 'handrawina_ecdh_v1_';
+const DEFAULT_PRIVATE_PROFILE_PREFERENCES = {
+  disappearingMessages: 'off',
+  screenLockEnabled: false,
+  alwaysRelayCallsTurn: false,
+  lowDataCalls: false,
+  defaultVideoQuality: '720p',
+  soundNotifications: true,
+  messagePreview: false,
+  autoDownloadMedia: false,
+} as const;
 
 export interface PersistentIdentityKey {
   keyPair: CryptoKeyPair;
@@ -199,6 +209,7 @@ export async function bootstrapAuthenticatedUser(
         backdropMotion: settings.backdropMotion,
         readReceiptsEnabled: settings.readReceiptsEnabled,
         typingIndicatorsEnabled: settings.typingIndicatorsEnabled,
+        ...DEFAULT_PRIVATE_PROFILE_PREFERENCES,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });

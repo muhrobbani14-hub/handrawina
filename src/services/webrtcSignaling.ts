@@ -18,6 +18,7 @@ import {
   sanitizeFirestoreId,
   type SerializedIceCandidates,
 } from '../utils/multiUserChat';
+import { requireWebRtcSdp } from '../utils/webrtcSdp';
 
 export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
@@ -268,6 +269,7 @@ export class HandrawinaWebRtcSession {
     const pc = this.createPeerConnection(params.localStream, hostUid, params.callbacks);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    const offerSdp = requireWebRtcSdp(pc.localDescription?.sdp, 'offer');
 
     const roomRef = doc(db, 'callRooms', this.roomCode);
     try {
@@ -281,7 +283,7 @@ export class HandrawinaWebRtcSession {
         calleeUid: '',
         calleeName: '',
         participantIds,
-        offerSdp: clampStr(offer.sdp, 32000, ''),
+        offerSdp,
         offerType: clampStr(offer.type, 16, 'offer'),
         answerSdp: '',
         answerType: '',
@@ -327,7 +329,7 @@ export class HandrawinaWebRtcSession {
             await this.pc.setRemoteDescription(
               new RTCSessionDescription({
                 type: (data.answerType as RTCSdpType) || 'answer',
-                sdp: String(data.answerSdp),
+                sdp: requireWebRtcSdp(data.answerSdp, 'answer'),
               })
             );
             this.remoteDescriptionSet = true;
@@ -389,16 +391,18 @@ export class HandrawinaWebRtcSession {
 
     const pc = this.createPeerConnection(params.localStream, calleeUid, params.callbacks);
     this.roomCreated = true;
+    const offerSdp = requireWebRtcSdp(roomData.offerSdp, 'offer');
     await pc.setRemoteDescription(
       new RTCSessionDescription({
         type: (roomData.offerType as RTCSdpType) || 'offer',
-        sdp: String(roomData.offerSdp),
+        sdp: offerSdp,
       })
     );
     this.remoteDescriptionSet = true;
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    const answerSdp = requireWebRtcSdp(pc.localDescription?.sdp, 'answer');
 
     const existingParticipants = Array.isArray(roomData.participantIds)
       ? roomData.participantIds.map(String)
@@ -413,7 +417,7 @@ export class HandrawinaWebRtcSession {
         calleeUid,
         calleeName: clampStr(params.calleeName, 80, 'Peserta Handrawina'),
         participantIds: nextParticipants,
-        answerSdp: clampStr(answer.sdp, 32000, ''),
+        answerSdp,
         answerType: clampStr(answer.type, 16, 'answer'),
         updatedAt: serverTimestamp(),
       });

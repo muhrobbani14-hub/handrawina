@@ -1350,9 +1350,12 @@ export async function saveUserContactOnly(params: {
 
   const ref = doc(db, 'users', ownerUid, 'contacts', contactUid);
   const path = `users/${ownerUid}/contacts/${contactUid}`;
-  try {
-    const existing = await getDoc(ref);
-    if (existing.exists()) {
+  const existing = await getDoc(ref).catch((error: unknown) => {
+    handleFirestoreError(error, OperationType.GET, path);
+  });
+
+  if (existing.exists()) {
+    try {
       await updateDoc(ref, {
         contactName: cleanContactName,
         profileName: cleanProfileName,
@@ -1365,7 +1368,11 @@ export async function saveUserContactOnly(params: {
         publicKeyJwkY: clampStr(params.publicKeyJwkY, 128, ''),
         updatedAt: serverTimestamp(),
       });
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  } else {
+    try {
       await setDoc(ref, {
         contactUid,
         ownerUid,
@@ -1381,9 +1388,9 @@ export async function saveUserContactOnly(params: {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
     }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 

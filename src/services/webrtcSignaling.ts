@@ -357,7 +357,13 @@ export class HandrawinaWebRtcSession {
     calleeName: string;
     localStream: MediaStream;
     callbacks: WebRtcSignalingCallbacks;
-  }): Promise<{ ok: boolean; hostName?: string; mode?: 'audio' | 'video'; error?: string }> {
+  }): Promise<{
+    ok: boolean;
+    hostName?: string;
+    hostUid?: string;
+    mode?: 'audio' | 'video';
+    error?: string;
+  }> {
     const calleeUid = sanitizeFirestoreId(params.calleeUid, 'user');
     const roomRef = doc(db, 'callRooms', this.roomCode);
 
@@ -451,6 +457,7 @@ export class HandrawinaWebRtcSession {
     return {
       ok: true,
       hostName: String(roomData.hostName || 'Host Handrawina'),
+      hostUid: String(roomData.hostUid || ''),
       mode: (roomData.mode as 'audio' | 'video') || 'video',
     };
   }

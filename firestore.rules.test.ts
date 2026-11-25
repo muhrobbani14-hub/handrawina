@@ -134,3 +134,16 @@ test('Blueprint coverage: every collection in firebase-blueprint.json has a matc
     assert.ok(rules.includes(m), `Missing rule matcher for ${m}`);
   }
 });
+
+test('Metered call upgrades require the active peer and track actual group joins', () => {
+  const rules = readRules();
+  assert.match(rules, /function isValidGroupCallUpgrade\(data\)[\s\S]*?data\.status == 'connected'/);
+  assert.match(
+    rules,
+    /function isValidGroupCall\(data\)[\s\S]*?'sourceCallRoomCode', 'sourcePeerUid', 'joinedUids'/
+  );
+  assert.match(
+    rules,
+    /request\.auth\.uid in existing\(\)\.acceptedUids[\s\S]*?incoming\(\)\.joinedUids\.size\(\) == groupCallJoinedUids\(existing\(\)\)\.size\(\) \+ 1[\s\S]*?hasOnly\(\['joinedUids', 'updatedAt'\]\)/
+  );
+});

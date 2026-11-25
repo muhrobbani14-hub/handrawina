@@ -11,11 +11,20 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { AlertTriangle, Mic, MicOff, PhoneOff, Video, VideoOff } from 'lucide-react';
+import {
+  AlertTriangle,
+  Mic,
+  MicOff,
+  PhoneOff,
+  RefreshCw,
+  Video,
+  VideoOff,
+} from 'lucide-react';
 import { db } from '../../firebase';
 import type { SavedContactRecord } from '../../utils/phoneAuthAndContacts';
 import {
   loadMeteredVideoSdk,
+  getNextVideoInputDevice,
   type MeteredMeeting,
   type MeteredParticipant,
   type MeteredTrackEvent,
@@ -28,6 +37,11 @@ const METERED_TEST_ENABLED =
 
 type GroupCallMode = 'audio' | 'video';
 type GroupCallStatus = 'creating' | 'ringing' | 'active' | 'ended';
+interface OneToOneCallContext {
+  roomCode: string;
+  peerUid: string;
+  mode: GroupCallMode;
+}
 
 interface GroupCallRecord {
   callId: string;
@@ -39,6 +53,9 @@ interface GroupCallRecord {
   acceptedUids: string[];
   declinedUids: string[];
   meteredRoomName: string;
+  sourceCallRoomCode: string;
+  sourcePeerUid: string;
+  joinedUids: string[];
 }
 
 interface ActiveGroupCall extends GroupCallRecord {
@@ -75,6 +92,9 @@ function toGroupCallRecord(callId: string, value: unknown): GroupCallRecord | nu
     !isStringList(data.invitedUids) ||
     !isStringList(data.acceptedUids) ||
     !isStringList(data.declinedUids) ||
+    (data.joinedUids !== undefined && !isStringList(data.joinedUids)) ||
+    (data.sourceCallRoomCode !== undefined && typeof data.sourceCallRoomCode !== 'string') ||
+    (data.sourcePeerUid !== undefined && typeof data.sourcePeerUid !== 'string') ||
     typeof data.meteredRoomName !== 'string'
   ) {
     return null;
@@ -89,11 +109,35 @@ function toGroupCallRecord(callId: string, value: unknown): GroupCallRecord | nu
     acceptedUids: data.acceptedUids,
     declinedUids: data.declinedUids,
     meteredRoomName: data.meteredRoomName,
+    sourceCallRoomCode: typeof data.sourceCallRoomCode === 'string' ? data.sourceCallRoomCode : '',
+    sourcePeerUid: typeof data.sourcePeerUid === 'string' ? data.sourcePeerUid : '',
+    joinedUids: isStringList(data.joinedUids) ? data.joinedUids : [],
   };
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+async function markGroupCallParticipantJoined(callId: string, uid: string): Promise<void> {
+  const callRef = doc(db, 'groupCallRooms', callId);
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(callRef);
+    const call = snapshot.exists()
+      ? toGroupCallRecord(snapshot.id, snapshot.data())
+      : null;
+    if (!call || call.status === 'ended' || !call.acceptedUids.includes(uid)) {
+      throw new Error('Panggilan grup tidak lagi mengizinkan Anda bergabung.');
+    }
+    if (call.joinedUids.includes(uid)) return;
+    if (call.joinedUids.length >= GROUP_CALL_MAX_PARTICIPANTS) {
+      throw new Error('Panggilan grup sudah mencapai batas delapan peserta.');
+    }
+    transaction.update(callRef, {
+      joinedUids: [...call.joinedUids, uid],
+      updatedAt: serverTimestamp(),
+    });
+  });
 }
 
 async function requestGroupCallApi(
@@ -225,13 +269,17 @@ export function MeteredGroupCallTestPanel({
   firebaseUser,
   displayName,
   oneToOneCallActive,
+  oneToOneCall,
   onActiveChange,
+  onOneToOneCallUpgradeComplete,
 }: {
   contacts: SavedContactRecord[];
   firebaseUser: User | null;
   displayName: string;
   oneToOneCallActive: boolean;
+  oneToOneCall: OneToOneCallContext | null;
   onActiveChange: (active: boolean) => void;
+  onOneToOneCallUpgradeComplete: () => Promise<void>;
 }) {
   const [selectedUids, setSelectedUids] = useState<string[]>([]);
   const [mode, setMode] = useState<GroupCallMode>('video');
@@ -241,12 +289,15 @@ export function MeteredGroupCallTestPanel({
   activeGroupCallRef.current = activeGroupCall;
   const meetingRef = useRef<MeteredMeeting | null>(null);
   const localParticipantIdRef = useRef<string | null>(null);
+  const selectedVideoDeviceIdRef = useRef<string | null>(null);
+  const upgradeCompletionRoomRef = useRef<string | null>(null);
   const leavingRef = useRef(false);
   const [localParticipantId, setLocalParticipantId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<Record<string, ParticipantMedia>>({});
   const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null);
   const [microphoneOn, setMicrophoneOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
+  const [cameraSwitching, setCameraSwitching] = useState(false);
   const [connected, setConnected] = useState(false);
   const [meetingState, setMeetingState] = useState('Menyiapkan panggilan');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -256,8 +307,38 @@ export function MeteredGroupCallTestPanel({
   const selectableContacts = contacts.filter(
     (contact, index) =>
       contact.contactUid !== firebaseUser?.uid &&
+      contact.contactUid !== oneToOneCall?.peerUid &&
       contacts.findIndex((entry) => entry.contactUid === contact.contactUid) === index
   );
+  const maximumSelectedContacts = oneToOneCall
+    ? GROUP_CALL_MAX_PARTICIPANTS - 2
+    : GROUP_CALL_MAX_PARTICIPANTS - 1;
+
+  const isMatchingUpgradeInvitation = (call: GroupCallRecord) =>
+    Boolean(
+      oneToOneCall &&
+        firebaseUser &&
+        call.sourceCallRoomCode === oneToOneCall.roomCode &&
+        call.sourcePeerUid === firebaseUser.uid &&
+        call.hostUid === oneToOneCall.peerUid
+    );
+
+  const hasUpgradePeerJoined = (call: GroupCallRecord) => {
+    if (!oneToOneCall || !firebaseUser || call.sourceCallRoomCode !== oneToOneCall.roomCode) {
+      return false;
+    }
+    if (call.hostUid === firebaseUser.uid) {
+      return (
+        call.sourcePeerUid === oneToOneCall.peerUid &&
+        call.joinedUids.includes(oneToOneCall.peerUid)
+      );
+    }
+    return (
+      call.hostUid === oneToOneCall.peerUid &&
+      call.sourcePeerUid === firebaseUser.uid &&
+      call.joinedUids.includes(firebaseUser.uid)
+    );
+  };
 
   useEffect(() => {
     if (!firebaseUser) {
@@ -320,6 +401,8 @@ export function MeteredGroupCallTestPanel({
         setActiveGroupCall(null);
         localParticipantIdRef.current = null;
         setLocalParticipantId(null);
+        selectedVideoDeviceIdRef.current = null;
+        upgradeCompletionRoomRef.current = null;
         setParticipants({});
         setLocalVideoStream(null);
         setConnected(false);
@@ -350,13 +433,28 @@ export function MeteredGroupCallTestPanel({
           void finishCurrentCall(false).catch((error) => {
             console.error('Failed to clean up ended Metered group call:', error);
           });
+        } else if (
+          hasUpgradePeerJoined(call) &&
+          upgradeCompletionRoomRef.current !== call.callId
+        ) {
+          upgradeCompletionRoomRef.current = call.callId;
+          void onOneToOneCallUpgradeComplete().catch((error) => {
+            upgradeCompletionRoomRef.current = null;
+            setError(getErrorMessage(error, 'Gagal menyelesaikan perpindahan panggilan.'));
+          });
         }
       },
       (snapshotError) => {
         setError(`Gagal memantau panggilan grup: ${snapshotError.message}`);
       }
     );
-  }, [activeGroupCall?.callId, finishCurrentCall]);
+  }, [
+    activeGroupCall?.callId,
+    finishCurrentCall,
+    firebaseUser,
+    oneToOneCall,
+    onOneToOneCallUpgradeComplete,
+  ]);
 
   useEffect(() => {
     if (!connected) {
@@ -390,6 +488,10 @@ export function MeteredGroupCallTestPanel({
 
       const meeting = new window.Metered.Meeting();
       meetingRef.current = meeting;
+      const updateLocalVideo = (track: MediaStreamTrack) => {
+        setLocalVideoStream(new MediaStream([track]));
+        selectedVideoDeviceIdRef.current = track.getSettings().deviceId || null;
+      };
       const addParticipant = (participant: MeteredParticipant) => {
         if (!participant._id || participant._id === localParticipantIdRef.current) return;
         setParticipants((current) => ({
@@ -404,10 +506,10 @@ export function MeteredGroupCallTestPanel({
       };
 
       meeting.on('localTrackStarted', (item) => {
-        if (item.type === 'video') setLocalVideoStream(new MediaStream([item.track]));
+        if (item.type === 'video') updateLocalVideo(item.track);
       });
       meeting.on('localTrackUpdated', (item) => {
-        if (item.type === 'video') setLocalVideoStream(new MediaStream([item.track]));
+        if (item.type === 'video') updateLocalVideo(item.track);
       });
       meeting.on('localTrackStopped', (item) => {
         if (item.type === 'video') setLocalVideoStream(null);
@@ -472,6 +574,7 @@ export function MeteredGroupCallTestPanel({
         meetingInfo.onlineParticipants.forEach(addParticipant);
         await meeting.startAudio();
         if (call.mode === 'video') await meeting.startVideo();
+        await markGroupCallParticipantJoined(call.callId, firebaseUser.uid);
       } catch (error) {
         try {
           await finishCurrentCall(false);
@@ -487,11 +590,25 @@ export function MeteredGroupCallTestPanel({
   );
 
   const startGroupCall = async (callMode: GroupCallMode) => {
-    if (!firebaseUser || oneToOneCallActive || activeGroupCall || busy) return;
-    if (selectedUids.length < 1 || selectedUids.length > GROUP_CALL_MAX_PARTICIPANTS - 1) {
-      setError('Pilih minimal satu dan maksimal tujuh kontak untuk panggilan grup.');
+    if (
+      !firebaseUser ||
+      (oneToOneCallActive && !oneToOneCall) ||
+      activeGroupCall ||
+      busy
+    ) {
       return;
     }
+    if (selectedUids.length < 1 || selectedUids.length > maximumSelectedContacts) {
+      setError(
+        oneToOneCall
+          ? 'Pilih minimal satu dan maksimal enam kontak tambahan.'
+          : 'Pilih minimal satu dan maksimal tujuh kontak untuk panggilan grup.'
+      );
+      return;
+    }
+    const invitedUids = oneToOneCall
+      ? [oneToOneCall.peerUid, ...selectedUids]
+      : selectedUids;
     setBusy(true);
     onActiveChange(true);
     setError(null);
@@ -503,12 +620,15 @@ export function MeteredGroupCallTestPanel({
         callId: callRef.id,
         hostUid: firebaseUser.uid,
         hostName: cleanName,
-        mode: callMode,
+        mode: oneToOneCall?.mode ?? callMode,
         status: 'creating',
-        invitedUids: selectedUids,
+        invitedUids,
         acceptedUids: [firebaseUser.uid],
         declinedUids: [],
         meteredRoomName: '',
+        sourceCallRoomCode: oneToOneCall?.roomCode ?? '',
+        sourcePeerUid: oneToOneCall?.peerUid ?? '',
+        joinedUids: [],
       };
       await setDoc(callRef, {
         ...call,
@@ -554,7 +674,14 @@ export function MeteredGroupCallTestPanel({
   };
 
   const acceptGroupCall = async (call: GroupCallRecord) => {
-    if (!firebaseUser || oneToOneCallActive || activeGroupCall || busy) return;
+    if (
+      !firebaseUser ||
+      (oneToOneCallActive && !isMatchingUpgradeInvitation(call)) ||
+      activeGroupCall ||
+      busy
+    ) {
+      return;
+    }
     setBusy(true);
     onActiveChange(true);
     setError(null);
@@ -656,6 +783,40 @@ export function MeteredGroupCallTestPanel({
     }
   };
 
+  const rotateCamera = async () => {
+    const meeting = meetingRef.current;
+    if (!meeting || !cameraOn || cameraSwitching) return;
+    setCameraSwitching(true);
+    setError(null);
+    try {
+      const devices = await meeting.listVideoInputDevices();
+      const currentDeviceId =
+        selectedVideoDeviceIdRef.current ||
+        localVideoStream?.getVideoTracks()[0]?.getSettings().deviceId ||
+        null;
+      const nextDevice = getNextVideoInputDevice(devices, currentDeviceId);
+      if (!nextDevice) {
+        setError(
+          devices.length === 0
+            ? 'Tidak ada kamera yang tersedia.'
+            : 'Perangkat ini hanya memiliki satu kamera.'
+        );
+        return;
+      }
+
+      await meeting.chooseVideoInputDevice(nextDevice.deviceId);
+      const stream = await meeting.getLocalVideoStream();
+      const [track] = stream.getVideoTracks();
+      if (!track) throw new Error('SDK tidak mengembalikan video dari kamera yang dipilih.');
+      selectedVideoDeviceIdRef.current = nextDevice.deviceId;
+      setLocalVideoStream(new MediaStream([track]));
+    } catch (error) {
+      setError(getErrorMessage(error, 'Gagal mengganti kamera.'));
+    } finally {
+      setCameraSwitching(false);
+    }
+  };
+
   const displayedParticipants = Object.values(participants).filter(
     (participant) => participant.id !== localParticipantId
   );
@@ -714,11 +875,19 @@ export function MeteredGroupCallTestPanel({
               <div className="flex gap-2">
                 <button
                   type="button"
-                  disabled={busy || oneToOneCallActive || Boolean(activeGroupCall)}
+                  disabled={
+                    busy ||
+                    (oneToOneCallActive && !isMatchingUpgradeInvitation(call)) ||
+                    Boolean(activeGroupCall)
+                  }
                   onClick={() => void acceptGroupCall(call)}
                   className="rounded-md bg-amber-400 px-3 py-2 text-xs font-semibold text-stone-950 hover:bg-amber-300 disabled:opacity-50"
                 >
-                  {call.acceptedUids.includes(firebaseUser?.uid ?? '') ? 'Gabung kembali' : 'Terima'}
+                  {call.acceptedUids.includes(firebaseUser?.uid ?? '')
+                    ? 'Gabung kembali'
+                    : isMatchingUpgradeInvitation(call)
+                      ? 'Pindah ke panggilan grup'
+                      : 'Terima'}
                 </button>
                 <button
                   type="button"
@@ -742,6 +911,12 @@ export function MeteredGroupCallTestPanel({
                   <p className="mt-1 text-xs text-stone-400">
                     Metered SFU (uji non-E2EE) · {meetingState} · {formatDuration(elapsedSeconds)}
                   </p>
+                  {activeGroupCall.sourcePeerUid &&
+                    !activeGroupCall.joinedUids.includes(activeGroupCall.sourcePeerUid) && (
+                      <p className="mt-1 text-xs text-amber-200">
+                        Menunggu lawan bicara 1:1 bergabung sebelum panggilan lama ditutup.
+                      </p>
+                    )}
                 </div>
                 <span className="text-xs text-stone-300">
                   {displayedParticipants.length + 1}/{GROUP_CALL_MAX_PARTICIPANTS} peserta
@@ -775,14 +950,25 @@ export function MeteredGroupCallTestPanel({
                   {microphoneOn ? 'Bisukan' : 'Nyalakan mikrofon'}
                 </button>
                 {activeGroupCall.mode === 'video' && (
-                  <button
-                    type="button"
-                    onClick={() => void toggleCamera()}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-stone-700 bg-stone-800 px-3 py-2 text-xs text-stone-100 hover:bg-stone-700"
-                  >
-                    {cameraOn ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
-                    {cameraOn ? 'Matikan kamera' : 'Nyalakan kamera'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void toggleCamera()}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-stone-700 bg-stone-800 px-3 py-2 text-xs text-stone-100 hover:bg-stone-700"
+                    >
+                      {cameraOn ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
+                      {cameraOn ? 'Matikan kamera' : 'Nyalakan kamera'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!cameraOn || cameraSwitching}
+                      onClick={() => void rotateCamera()}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-stone-700 bg-stone-800 px-3 py-2 text-xs text-stone-100 hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${cameraSwitching ? 'animate-spin' : ''}`} />
+                      {cameraSwitching ? 'Mengganti kamera...' : 'Ganti kamera'}
+                    </button>
+                  </>
                 )}
                 <button
                   type="button"
@@ -797,29 +983,39 @@ export function MeteredGroupCallTestPanel({
           ) : (
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-stone-100">Buat panggilan grup</h3>
+                <h3 className="text-sm font-semibold text-stone-100">
+                  {oneToOneCall ? 'Tambahkan kontak ke panggilan ini' : 'Buat panggilan grup'}
+                </h3>
                 <p className="mt-1 text-xs text-stone-400">
-                  Pilih kontak tersimpan untuk diundang. Maksimal tujuh undangan selain Anda.
+                  {oneToOneCall
+                    ? 'Panggilan tetap berjalan sambil menunggu lawan bicara pindah ke ruang grup. Pilih hingga enam kontak tambahan.'
+                    : 'Pilih kontak tersimpan untuk diundang. Maksimal tujuh undangan selain Anda.'}
                 </p>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                {(['video', 'audio'] as const).map((callMode) => (
-                  <button
-                    key={callMode}
-                    type="button"
-                    aria-pressed={mode === callMode}
-                    onClick={() => setMode(callMode)}
-                    className={`rounded-md border px-3 py-2 text-xs ${
-                      mode === callMode
-                        ? 'border-amber-300 bg-amber-400 text-stone-950'
-                        : 'border-stone-700 bg-stone-900 text-stone-200'
-                    }`}
-                  >
-                    {callMode === 'video' ? 'Video Call' : 'Panggilan Suara'}
-                  </button>
-                ))}
-              </div>
+              {oneToOneCall ? (
+                <p className="text-xs text-stone-300">
+                  Jenis panggilan dipertahankan: {oneToOneCall.mode === 'video' ? 'video' : 'suara'}.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {(['video', 'audio'] as const).map((callMode) => (
+                    <button
+                      key={callMode}
+                      type="button"
+                      aria-pressed={mode === callMode}
+                      onClick={() => setMode(callMode)}
+                      className={`rounded-md border px-3 py-2 text-xs ${
+                        mode === callMode
+                          ? 'border-amber-300 bg-amber-400 text-stone-950'
+                          : 'border-stone-700 bg-stone-900 text-stone-200'
+                      }`}
+                    >
+                      {callMode === 'video' ? 'Video Call' : 'Panggilan Suara'}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="max-h-56 divide-y divide-stone-800 overflow-y-auto rounded-md border border-stone-800">
                 {selectableContacts.length === 0 ? (
@@ -835,7 +1031,7 @@ export function MeteredGroupCallTestPanel({
                         <input
                           type="checkbox"
                           checked={selected}
-                          disabled={!selected && selectedUids.length >= GROUP_CALL_MAX_PARTICIPANTS - 1}
+                          disabled={!selected && selectedUids.length >= maximumSelectedContacts}
                           onChange={(event) => {
                             setSelectedUids((current) =>
                               event.target.checked
@@ -861,25 +1057,32 @@ export function MeteredGroupCallTestPanel({
 
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs text-stone-400">
-                  {selectedUids.length + 1}/{GROUP_CALL_MAX_PARTICIPANTS} peserta dipilih
+                  {selectedUids.length + (oneToOneCall ? 2 : 1)}/{GROUP_CALL_MAX_PARTICIPANTS} peserta dipilih
                 </span>
                 <button
                   type="button"
                   disabled={
                     busy ||
                     !firebaseUser ||
-                    oneToOneCallActive ||
+                    (oneToOneCallActive && !oneToOneCall) ||
                     selectedUids.length === 0 ||
-                    selectedUids.length > GROUP_CALL_MAX_PARTICIPANTS - 1
+                    selectedUids.length > maximumSelectedContacts
                   }
                   onClick={() => void startGroupCall(mode)}
                   className="rounded-md bg-amber-400 px-4 py-2 text-xs font-semibold text-stone-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {busy ? 'Menyiapkan panggilan...' : 'Mulai dan undang'}
+                  {busy
+                    ? 'Menyiapkan panggilan...'
+                    : oneToOneCall
+                      ? 'Tambahkan kontak'
+                      : 'Mulai dan undang'}
                 </button>
               </div>
-              {oneToOneCallActive && (
-                <p className="text-xs text-amber-200">Akhiri panggilan 1:1 sebelum memulai panggilan grup.</p>
+              {oneToOneCallActive && !oneToOneCall && (
+                <p className="text-xs text-amber-200">
+                  Panggilan 1:1 belum tersambung atau identitas lawan bicara belum tersedia.
+                  Tunggu sampai tersambung sebelum menambahkan kontak.
+                </p>
               )}
             </div>
           )}

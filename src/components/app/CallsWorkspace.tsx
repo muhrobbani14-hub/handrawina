@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   Camera,
@@ -26,6 +26,7 @@ export interface ActiveCallSession {
   mode: 'audio' | 'video';
   topology: CallRecord['topology'];
   participants: string[];
+  peerUid?: string;
   direction?: 'outgoing' | 'incoming';
 }
 
@@ -48,6 +49,7 @@ interface CallsWorkspaceProps {
   onLocalStreamReady: (stream: MediaStream) => void;
   onCallSetupError: (message: string) => void;
   onReplaceVideoTrack?: (track: MediaStreamTrack | null) => void;
+  onOneToOneCallUpgradeComplete: () => Promise<void>;
   contacts: SavedContactRecord[];
   firebaseUser: User | null;
   displayName: string;
@@ -69,6 +71,7 @@ export function CallsWorkspace({
   onLocalStreamReady,
   onCallSetupError,
   onReplaceVideoTrack,
+  onOneToOneCallUpgradeComplete,
   contacts,
   firebaseUser,
   displayName,
@@ -78,6 +81,17 @@ export function CallsWorkspace({
   const [cameraOn, setCameraOn] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const oneToOneCallContext = useMemo(
+    () =>
+      activeCall && callConnected && activeCall.peerUid
+        ? {
+            roomCode: activeCall.roomCode,
+            peerUid: activeCall.peerUid,
+            mode: activeCall.mode,
+          }
+        : null,
+    [activeCall?.mode, activeCall?.peerUid, activeCall?.roomCode, callConnected]
+  );
 
   // Real browser camera/screen media state
   const [hasLiveVideoTrack, setHasLiveVideoTrack] = useState(false);
@@ -303,7 +317,9 @@ export function CallsWorkspace({
           firebaseUser={firebaseUser}
           displayName={displayName}
           oneToOneCallActive={Boolean(activeCall)}
+          oneToOneCall={oneToOneCallContext}
           onActiveChange={onGroupCallActiveChange}
+          onOneToOneCallUpgradeComplete={onOneToOneCallUpgradeComplete}
         />
 
         {/* Active WebRTC Video/Voice Call Stage */}

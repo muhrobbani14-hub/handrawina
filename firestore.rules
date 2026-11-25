@@ -389,6 +389,40 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function groupCallSourceRoomCode(data) {
+      return data.keys().hasAny(['sourceCallRoomCode'])
+        ? data.sourceCallRoomCode
+        : '';
+    }
+
+    function groupCallSourcePeerUid(data) {
+      return data.keys().hasAny(['sourcePeerUid'])
+        ? data.sourcePeerUid
+        : '';
+    }
+
+    function groupCallJoinedUids(data) {
+      return data.keys().hasAny(['joinedUids'])
+        ? data.joinedUids
+        : [];
+    }
+
+    function isValidGroupCallUpgrade(data) {
+      let sourceCallRoomCode = groupCallSourceRoomCode(data);
+      let sourcePeerUid = groupCallSourcePeerUid(data);
+      return (sourceCallRoomCode == '' && sourcePeerUid == '')
+        || (
+          isValidId(sourceCallRoomCode)
+          && isValidId(sourcePeerUid)
+          && sourcePeerUid in data.invitedUids
+          && exists(/databases/$(database)/documents/callRooms/$(sourceCallRoomCode))
+          && get(/databases/$(database)/documents/callRooms/$(sourceCallRoomCode)).data.status == 'connected'
+          && request.auth.uid in get(/databases/$(database)/documents/callRooms/$(sourceCallRoomCode)).data.participantIds
+          && sourcePeerUid in get(/databases/$(database)/documents/callRooms/$(sourceCallRoomCode)).data.participantIds
+          && get(/databases/$(database)/documents/callRooms/$(sourceCallRoomCode)).data.hostUid in [request.auth.uid, sourcePeerUid]
+        );
+    }
+
     function isValidGroupCall(data) {
       return data.keys().hasAll([
           'callId', 'hostUid', 'hostName', 'mode', 'status', 'invitedUids',
@@ -396,7 +430,8 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'callId', 'hostUid', 'hostName', 'mode', 'status', 'invitedUids',
-          'acceptedUids', 'declinedUids', 'meteredRoomName', 'createdAt', 'updatedAt'
+          'acceptedUids', 'declinedUids', 'meteredRoomName', 'createdAt', 'updatedAt',
+          'sourceCallRoomCode', 'sourcePeerUid', 'joinedUids'
         ])
         && isValidId(data.callId)
         && isValidId(data.hostUid)
@@ -406,6 +441,23 @@ service cloud.firestore {
         && isBoundedStringList(data.invitedUids, 1, 7)
         && isBoundedStringList(data.acceptedUids, 1, 8)
         && isBoundedStringList(data.declinedUids, 0, 7)
+        && (!data.keys().hasAny(['sourceCallRoomCode']) || isOptStr(data.sourceCallRoomCode, 128))
+        && (!data.keys().hasAny(['sourcePeerUid']) || isOptStr(data.sourcePeerUid, 128))
+        && (
+          !data.keys().hasAny(['joinedUids'])
+          || (
+            isBoundedStringList(data.joinedUids, 0, 8)
+            && data.joinedUids.toSet().size() == data.joinedUids.size()
+          )
+        )
+        && (
+          (groupCallSourceRoomCode(data) == '' && groupCallSourcePeerUid(data) == '')
+          || (
+            isNonEmptyStr(groupCallSourceRoomCode(data), 128)
+            && isNonEmptyStr(groupCallSourcePeerUid(data), 128)
+            && groupCallSourcePeerUid(data) in data.invitedUids
+          )
+        )
         && isOptStr(data.meteredRoomName, 128)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -417,14 +469,18 @@ service cloud.firestore {
       );
     }
 
-    function invitedContactsAreSaved(ownerUid, invitedUids) {
-      return (invitedUids.size() < 1 || isSavedContact(ownerUid, invitedUids[0]))
-        && (invitedUids.size() < 2 || isSavedContact(ownerUid, invitedUids[1]))
-        && (invitedUids.size() < 3 || isSavedContact(ownerUid, invitedUids[2]))
-        && (invitedUids.size() < 4 || isSavedContact(ownerUid, invitedUids[3]))
-        && (invitedUids.size() < 5 || isSavedContact(ownerUid, invitedUids[4]))
-        && (invitedUids.size() < 6 || isSavedContact(ownerUid, invitedUids[5]))
-        && (invitedUids.size() < 7 || isSavedContact(ownerUid, invitedUids[6]));
+    function isSavedContactOrCurrentCallPeer(ownerUid, contactUid, sourcePeerUid) {
+      return contactUid == sourcePeerUid || isSavedContact(ownerUid, contactUid);
+    }
+
+    function invitedContactsAreSaved(ownerUid, invitedUids, sourcePeerUid) {
+      return (invitedUids.size() < 1 || isSavedContactOrCurrentCallPeer(ownerUid, invitedUids[0], sourcePeerUid))
+        && (invitedUids.size() < 2 || isSavedContactOrCurrentCallPeer(ownerUid, invitedUids[1], sourcePeerUid))
+        && (invitedUids.size() < 3 || isSavedContactOrCurrentCallPeer(ownerUid, invitedUids[2], sourcePeerUid))
+        && (invitedUids.size() < 4 || isSavedContactOrCurrentCallPeer(ownerUid, invitedUids[3], sourcePeerUid))
+        && (invitedUids.size() < 5 || isSavedContactOrCurrentCallPeer(ownerUid, invitedUids[4], sourcePeerUid))
+        && (invitedUids.size() < 6 || isSavedContactOrCurrentCallPeer(ownerUid, invitedUids[5], sourcePeerUid))
+        && (invitedUids.size() < 7 || isSavedContactOrCurrentCallPeer(ownerUid, invitedUids[6], sourcePeerUid));
     }
 
     function isValidCallSignalBucket(data) {
@@ -625,7 +681,12 @@ service cloud.firestore {
         && incoming().acceptedUids == [request.auth.uid]
         && !(request.auth.uid in incoming().invitedUids)
         && incoming().invitedUids.toSet().size() == incoming().invitedUids.size()
-        && invitedContactsAreSaved(request.auth.uid, incoming().invitedUids)
+        && invitedContactsAreSaved(
+          request.auth.uid,
+          incoming().invitedUids,
+          groupCallSourcePeerUid(incoming())
+        )
+        && isValidGroupCallUpgrade(incoming())
         && incoming().declinedUids.size() == 0
         && incoming().meteredRoomName == ''
         && incoming().createdAt == request.time
@@ -639,6 +700,8 @@ service cloud.firestore {
         && incoming().hostName == existing().hostName
         && incoming().mode == existing().mode
         && incoming().invitedUids == existing().invitedUids
+        && groupCallSourceRoomCode(incoming()) == groupCallSourceRoomCode(existing())
+        && groupCallSourcePeerUid(incoming()) == groupCallSourcePeerUid(existing())
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
@@ -690,6 +753,20 @@ service cloud.firestore {
             && incoming().status == existing().status
             && incoming().meteredRoomName == existing().meteredRoomName
             && incoming().diff(existing()).affectedKeys().hasOnly(['declinedUids', 'updatedAt'])
+          )
+          ||
+          (
+            existing().status in ['ringing', 'active']
+            && request.auth.uid in existing().acceptedUids
+            && !(request.auth.uid in groupCallJoinedUids(existing()))
+            && request.auth.uid in incoming().joinedUids
+            && incoming().joinedUids.size() == groupCallJoinedUids(existing()).size() + 1
+            && incoming().joinedUids.hasAll(groupCallJoinedUids(existing()))
+            && incoming().acceptedUids == existing().acceptedUids
+            && incoming().declinedUids == existing().declinedUids
+            && incoming().status == existing().status
+            && incoming().meteredRoomName == existing().meteredRoomName
+            && incoming().diff(existing()).affectedKeys().hasOnly(['joinedUids', 'updatedAt'])
           )
         );
       allow delete: if false;

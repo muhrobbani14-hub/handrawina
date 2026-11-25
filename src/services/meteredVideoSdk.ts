@@ -17,6 +17,12 @@ export interface MeteredMeetingInfo {
   onlineParticipants: MeteredParticipant[];
 }
 
+export interface MeteredVideoInputDevice {
+  deviceId: string;
+  groupId: string;
+  label: string;
+}
+
 export interface MeteredMeeting {
   join(options: {
     roomURL: string;
@@ -26,6 +32,9 @@ export interface MeteredMeeting {
   startAudio(): Promise<void>;
   startVideo(): Promise<void>;
   stopVideo(): Promise<void>;
+  listVideoInputDevices(): Promise<MeteredVideoInputDevice[]>;
+  chooseVideoInputDevice(deviceId: string): Promise<void>;
+  getLocalVideoStream(): Promise<MediaStream>;
   muteLocalAudio(): Promise<void>;
   unmuteLocalAudio(): Promise<void>;
   leaveMeeting(): Promise<void>;
@@ -38,6 +47,16 @@ export interface MeteredMeeting {
   on(event: 'onlineParticipants', listener: (participants: MeteredParticipant[]) => void): void;
   on(event: 'stateChanged', listener: (state: string) => void): void;
   on(event: 'meetingEnded' | 'meetingLeft', listener: () => void): void;
+}
+
+export function getNextVideoInputDevice(
+  devices: MeteredVideoInputDevice[],
+  currentDeviceId: string | null
+): MeteredVideoInputDevice | null {
+  if (devices.length < 2) return null;
+  const currentIndex = devices.findIndex((device) => device.deviceId === currentDeviceId);
+  const nextIndex = currentIndex < 0 ? 1 : (currentIndex + 1) % devices.length;
+  return devices[nextIndex] ?? null;
 }
 
 interface MeteredNamespace {

@@ -286,7 +286,8 @@ export default function App() {
         setCloudBannerNotice('Akhiri panggilan yang sedang berlangsung sebelum memulai panggilan baru.');
         return;
       }
-      if (!cloud.getPeerUidForConversation(targetConv.id)) {
+      const peerUid = cloud.getPeerUidForConversation(targetConv.id);
+      if (!peerUid) {
         setCloudBannerNotice('Kontak ini belum memiliki akun cloud yang dapat dipanggil.');
         window.setTimeout(() => setCloudBannerNotice(null), 8000);
         return;
@@ -302,6 +303,7 @@ export default function App() {
         mode: params.mode,
         topology: 'P2P-DTLS-SRTP',
         participants: [effectiveSnapshot?.account.displayName ?? 'Anda', targetConv.name],
+        peerUid,
         direction: 'outgoing',
       });
       setActiveTab('calls');
@@ -317,7 +319,12 @@ export default function App() {
   };
 
   const handleJoinCallByCode = useCallback(
-    (roomCode: string, modeOverride: 'audio' | 'video' = 'video', hostName = 'Host Handrawina') => {
+    (
+      roomCode: string,
+      modeOverride: 'audio' | 'video' = 'video',
+      hostName = 'Host Handrawina',
+      peerUid = ''
+    ) => {
       const normalized = roomCode.trim().toUpperCase();
       if (activeCallRef.current || groupCallActive) {
         setCloudBannerNotice('Akhiri panggilan yang sedang berlangsung sebelum bergabung ke panggilan lain.');
@@ -348,6 +355,7 @@ export default function App() {
           mode: modeOverride,
           topology: 'P2P-DTLS-SRTP',
           participants: [effectiveSnapshot?.account.displayName ?? 'Anda', hostName],
+          ...(peerUid ? { peerUid } : {}),
           direction: 'incoming',
         };
       });
@@ -491,6 +499,12 @@ export default function App() {
           .then((res) => {
             if (!res.ok && res.error) {
               handleCallFailure(res.error);
+            } else if (res.ok && res.hostUid) {
+              setActiveCall((prev) =>
+                prev && prev.roomCode === call.roomCode
+                  ? { ...prev, peerUid: res.hostUid }
+                  : prev
+              );
             }
           })
           .catch((error) =>
@@ -536,46 +550,59 @@ export default function App() {
     handleJoinCallByCode,
   ]);
 
-  const handleEndCall = async (durationSec: number) => {
-    const endedCall = activeCallRef.current;
-    if (!endedCall) return;
-    const shouldLogCall = connectedAtRef.current !== null;
-    activeCallRef.current = null;
-    setActiveCall(null);
-    setRemoteStream(null);
-    setWebrtcStatus(null);
-    setCallConnected(false);
-    connectedAtRef.current = null;
-    if (webrtcSessionRef.current) {
-      const s = webrtcSessionRef.current;
-      webrtcSessionRef.current = null;
-      try {
-        await s.endCall(true);
-      } catch (error) {
-        setCloudBannerNotice(
-          error instanceof Error ? `Panggilan berakhir, tetapi status cloud gagal diperbarui: ${error.message}` : 'Panggilan berakhir, tetapi status cloud gagal diperbarui.'
-        );
+  const handleEndCall = useCallback(
+    async (durationSec: number, updateRoomStatus = true) => {
+      const endedCall = activeCallRef.current;
+      if (!endedCall) return;
+      const shouldLogCall = connectedAtRef.current !== null;
+      activeCallRef.current = null;
+      setActiveCall(null);
+      setRemoteStream(null);
+      setWebrtcStatus(null);
+      setCallConnected(false);
+      connectedAtRef.current = null;
+      if (webrtcSessionRef.current) {
+        const s = webrtcSessionRef.current;
+        webrtcSessionRef.current = null;
+        try {
+          await s.endCall(updateRoomStatus);
+        } catch (error) {
+          setCloudBannerNotice(
+            error instanceof Error ? `Panggilan berakhir, tetapi status cloud gagal diperbarui: ${error.message}` : 'Panggilan berakhir, tetapi status cloud gagal diperbarui.'
+          );
+        }
       }
-    }
 
-    if (shouldLogCall) {
-      try {
-        await cloud.logCall({
-          conversationId: endedCall.conversation.id,
-          peerName: endedCall.conversation.name,
-          mode: endedCall.mode,
-          topology: endedCall.topology,
-          participants: endedCall.participants,
-          durationSec: Math.max(1, durationSec),
-          direction: endedCall.direction ?? 'outgoing',
-        });
-      } catch (error) {
-        setCloudBannerNotice(
-          error instanceof Error ? `Riwayat panggilan gagal disimpan: ${error.message}` : 'Riwayat panggilan gagal disimpan.'
-        );
+      if (shouldLogCall) {
+        try {
+          await cloud.logCall({
+            conversationId: endedCall.conversation.id,
+            peerName: endedCall.conversation.name,
+            mode: endedCall.mode,
+            topology: endedCall.topology,
+            participants: endedCall.participants,
+            durationSec: Math.max(1, durationSec),
+            direction: endedCall.direction ?? 'outgoing',
+          });
+        } catch (error) {
+          setCloudBannerNotice(
+            error instanceof Error ? `Riwayat panggilan gagal disimpan: ${error.message}` : 'Riwayat panggilan gagal disimpan.'
+          );
+        }
       }
-    }
-  };
+    },
+    [cloud.logCall]
+  );
+
+  const handleOneToOneUpgradeCompleted = useCallback(async () => {
+    const active = activeCallRef.current;
+    if (!active) return;
+    const connectedAt = connectedAtRef.current;
+    const durationSec = connectedAt
+      ? Math.max(1, Math.floor((Date.now() - connectedAt) / 1000))
+      : 0;
+    await handleEndCall(durationSec, active.direction === 'outgoing');
+  }, [handleEndCall]);
 
   const handleReplyToStatus = useCallback(
     async (params: { status: StatusUpdate; replyText: string }) => {
@@ -944,7 +971,12 @@ export default function App() {
                 const incoming = cloud.incomingCall;
                 if (!incoming) return;
                 cloud.dismissIncomingCall();
-                handleJoinCallByCode(incoming.roomCode, incoming.mode, incoming.hostName);
+                handleJoinCallByCode(
+                  incoming.roomCode,
+                  incoming.mode,
+                  incoming.hostName,
+                  incoming.hostUid
+                );
               }}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-stone-950 bg-[#FDBA74] hover:bg-amber-300 rounded-full cursor-pointer transition-colors"
             >
@@ -1045,6 +1077,7 @@ export default function App() {
             onStartCall={handleStartCall}
             onJoinCallByCode={handleJoinCallByCode}
             onEndCall={handleEndCall}
+            onOneToOneCallUpgradeComplete={handleOneToOneUpgradeCompleted}
             onOpenOutgoingCallModal={() => setOutgoingCallModalOpen(true)}
             contacts={cloud.contacts}
             firebaseUser={cloud.firebaseUser}

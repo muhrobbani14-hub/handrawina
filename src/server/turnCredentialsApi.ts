@@ -1,8 +1,7 @@
 import { createHmac } from 'node:crypto';
 import express from 'express';
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
+import { verifyFirebaseIdToken } from './firebaseIdToken.ts';
 
 type TurnCredentialConfig =
   | {
@@ -93,20 +92,6 @@ function readTurnCredentialConfig(): TurnCredentialConfig | null {
   return { mode: 'coturn-rest', urls, sharedSecret, ttlSeconds };
 }
 
-function getFirebaseAuth() {
-  const appName = 'turn-credentials';
-  const existingApp = getApps().find((app) => app.name === appName);
-  if (existingApp) return getAuth(existingApp);
-
-  const app = initializeApp(
-    {
-      projectId: firebaseConfig.projectId,
-    },
-    appName
-  );
-  return getAuth(app);
-}
-
 const INVALID_TOKEN_CODES = new Set([
   'auth/argument-error',
   'auth/id-token-expired',
@@ -143,7 +128,7 @@ export function createTurnCredentialsApi(): express.Router {
     }
 
     try {
-      const decodedToken = await getFirebaseAuth().verifyIdToken(match[1]);
+      const decodedToken = await verifyFirebaseIdToken(match[1], firebaseConfig.apiKey);
       const iceServer = createTurnIceServer(decodedToken.uid, config);
       res.json({
         iceServers: [iceServer],

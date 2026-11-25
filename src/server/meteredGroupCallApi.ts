@@ -1,8 +1,7 @@
 import { createHmac } from 'node:crypto';
 import express from 'express';
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
+import { verifyFirebaseIdToken } from './firebaseIdToken.ts';
 
 const GROUP_CALL_MAX_PARTICIPANTS = 8;
 const GROUP_CALL_DURATION_SECONDS = 60 * 60;
@@ -45,15 +44,6 @@ class ApiError extends Error {
   ) {
     super(message);
   }
-}
-
-function getFirebaseAuth() {
-  const appName = 'metered-group-calls';
-  const existingApp = getApps().find((app) => app.name === appName);
-  if (existingApp) return getAuth(existingApp);
-
-  const app = initializeApp({ projectId: firebaseConfig.projectId }, appName);
-  return getAuth(app);
 }
 
 export function createMeteredRoomName(
@@ -276,10 +266,8 @@ export function createMeteredGroupCallApi(
   const fetchImpl = dependencies.fetch ?? fetch;
   const verifyIdToken =
     dependencies.verifyIdToken ??
-    (async (idToken: string) => {
-      const decoded = await getFirebaseAuth().verifyIdToken(idToken);
-      return { uid: decoded.uid, name: decoded.name };
-    });
+    ((idToken: string) =>
+      verifyFirebaseIdToken(idToken, firebaseConfig.apiKey, fetchImpl));
 
   router.post('/api/metered-group-call/:action', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');

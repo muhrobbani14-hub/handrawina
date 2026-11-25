@@ -90,6 +90,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppWorkspaceTab>('chats');
   const [activeConvId, setActiveConvId] = useState<string>('');
   const [activeCall, setActiveCall] = useState<ActiveCallSession | null>(null);
+  const [groupCallActive, setGroupCallActive] = useState(false);
   const activeCallRef = useRef(activeCall);
   activeCallRef.current = activeCall;
   const [joinModalOpen, setJoinModalOpen] = useState<boolean>(false);
@@ -281,7 +282,7 @@ export default function App() {
       const roomCode = `HND-VID-${roomSuffix}`;
       const targetConv = params.conversation;
       if (targetConv.kind !== 'direct') return;
-      if (activeCallRef.current) {
+      if (activeCallRef.current || groupCallActive) {
         setCloudBannerNotice('Akhiri panggilan yang sedang berlangsung sebelum memulai panggilan baru.');
         return;
       }
@@ -305,7 +306,7 @@ export default function App() {
       });
       setActiveTab('calls');
     },
-    [cloud.getPeerUidForConversation, effectiveSnapshot?.account.displayName]
+    [cloud.getPeerUidForConversation, effectiveSnapshot?.account.displayName, groupCallActive]
   );
 
   const handleStartCall = (conversation: Conversation, mode: 'audio' | 'video') => {
@@ -318,7 +319,10 @@ export default function App() {
   const handleJoinCallByCode = useCallback(
     (roomCode: string, modeOverride: 'audio' | 'video' = 'video', hostName = 'Host Handrawina') => {
       const normalized = roomCode.trim().toUpperCase();
-      if (activeCallRef.current) return;
+      if (activeCallRef.current || groupCallActive) {
+        setCloudBannerNotice('Akhiri panggilan yang sedang berlangsung sebelum bergabung ke panggilan lain.');
+        return;
+      }
       failedRoomRef.current = null;
       connectedAtRef.current = null;
       setCallConnected(false);
@@ -349,7 +353,7 @@ export default function App() {
       });
       setActiveTab('calls');
     },
-    [effectiveSnapshot?.account.displayName]
+    [effectiveSnapshot?.account.displayName, groupCallActive]
   );
 
   // Wire real Firestore WebRTC P2P signaling whenever CallsWorkspace provides local media stream
@@ -919,7 +923,7 @@ export default function App() {
       )}
 
       {/* Live Incoming WebRTC Call Banner (Multi-User Cloud) */}
-      {isCloudMultiUser && cloud.incomingCall && !activeCall && (
+      {isCloudMultiUser && cloud.incomingCall && !activeCall && !groupCallActive && (
         <div
           role="alert"
           data-testid="incoming-call-banner"
@@ -1042,6 +1046,10 @@ export default function App() {
             onJoinCallByCode={handleJoinCallByCode}
             onEndCall={handleEndCall}
             onOpenOutgoingCallModal={() => setOutgoingCallModalOpen(true)}
+            contacts={cloud.contacts}
+            firebaseUser={cloud.firebaseUser}
+            displayName={effectiveSnapshot.account.displayName}
+            onGroupCallActiveChange={setGroupCallActive}
           />
         </div>
 
@@ -1135,7 +1143,7 @@ export default function App() {
                     aria-hidden="true"
                   />
                 )}
-                {tab.id === 'calls' && activeCall && (
+                {tab.id === 'calls' && (activeCall || groupCallActive) && (
                   <span
                     className={`absolute -top-0.5 right-1.5 w-2.5 h-2.5 rounded-full border-2 ${navTheme.statusDotClass} ${navTheme.mobileDotBorderClass}`}
                     aria-hidden="true"

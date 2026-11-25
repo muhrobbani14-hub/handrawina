@@ -389,6 +389,44 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidGroupCall(data) {
+      return data.keys().hasAll([
+          'callId', 'hostUid', 'hostName', 'mode', 'status', 'invitedUids',
+          'acceptedUids', 'declinedUids', 'meteredRoomName', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'callId', 'hostUid', 'hostName', 'mode', 'status', 'invitedUids',
+          'acceptedUids', 'declinedUids', 'meteredRoomName', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.callId)
+        && isValidId(data.hostUid)
+        && isNonEmptyStr(data.hostName, 80)
+        && data.mode in ['audio', 'video']
+        && data.status in ['creating', 'ringing', 'active', 'ended']
+        && isBoundedStringList(data.invitedUids, 1, 7)
+        && isBoundedStringList(data.acceptedUids, 1, 8)
+        && isBoundedStringList(data.declinedUids, 0, 7)
+        && isOptStr(data.meteredRoomName, 128)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isSavedContact(ownerUid, contactUid) {
+      return exists(
+        /databases/$(database)/documents/users/$(ownerUid)/contacts/$(contactUid)
+      );
+    }
+
+    function invitedContactsAreSaved(ownerUid, invitedUids) {
+      return (invitedUids.size() < 1 || isSavedContact(ownerUid, invitedUids[0]))
+        && (invitedUids.size() < 2 || isSavedContact(ownerUid, invitedUids[1]))
+        && (invitedUids.size() < 3 || isSavedContact(ownerUid, invitedUids[2]))
+        && (invitedUids.size() < 4 || isSavedContact(ownerUid, invitedUids[3]))
+        && (invitedUids.size() < 5 || isSavedContact(ownerUid, invitedUids[4]))
+        && (invitedUids.size() < 6 || isSavedContact(ownerUid, invitedUids[5]))
+        && (invitedUids.size() < 7 || isSavedContact(ownerUid, invitedUids[6]));
+    }
+
     function isValidCallSignalBucket(data) {
       return data.keys().hasAll([
           'role', 'senderUid', 'candidateStrings', 'sdpMids',
@@ -566,6 +604,95 @@ service cloud.firestore {
           && request.auth.uid == userId
           && exists(/databases/$(database)/documents/users/$(userId));
       }
+    }
+
+    match /groupCallRooms/{callId} {
+      allow get: if isSignedIn()
+        && isValidId(callId)
+        && (
+          existing().hostUid == request.auth.uid
+          || request.auth.uid in existing().invitedUids
+          || request.auth.uid in existing().acceptedUids
+        );
+      allow list: if isSignedIn()
+        && request.auth.uid in resource.data.invitedUids;
+      allow create: if isVerifiedUser()
+        && isValidId(callId)
+        && isValidGroupCall(incoming())
+        && incoming().callId == callId
+        && incoming().hostUid == request.auth.uid
+        && incoming().status == 'creating'
+        && incoming().acceptedUids == [request.auth.uid]
+        && !(request.auth.uid in incoming().invitedUids)
+        && incoming().invitedUids.toSet().size() == incoming().invitedUids.size()
+        && invitedContactsAreSaved(request.auth.uid, incoming().invitedUids)
+        && incoming().declinedUids.size() == 0
+        && incoming().meteredRoomName == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(callId)
+        && isValidGroupCall(incoming())
+        && existing().status != 'ended'
+        && incoming().callId == existing().callId
+        && incoming().hostUid == existing().hostUid
+        && incoming().hostName == existing().hostName
+        && incoming().mode == existing().mode
+        && incoming().invitedUids == existing().invitedUids
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            existing().status == 'creating'
+            && existing().hostUid == request.auth.uid
+            && incoming().status == 'ringing'
+            && isNonEmptyStr(incoming().meteredRoomName, 128)
+            && incoming().acceptedUids == existing().acceptedUids
+            && incoming().declinedUids == existing().declinedUids
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'meteredRoomName', 'updatedAt'
+            ])
+          )
+          ||
+          (
+            existing().hostUid == request.auth.uid
+            && incoming().status == 'ended'
+            && incoming().acceptedUids == existing().acceptedUids
+            && incoming().declinedUids == existing().declinedUids
+            && incoming().meteredRoomName == existing().meteredRoomName
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+          ||
+          (
+            existing().status in ['ringing', 'active']
+            &&
+            request.auth.uid in existing().invitedUids
+            && request.auth.uid in incoming().acceptedUids
+            && !(request.auth.uid in existing().acceptedUids)
+            && incoming().acceptedUids.size() == existing().acceptedUids.size() + 1
+            && incoming().acceptedUids.hasAll(existing().acceptedUids)
+            && incoming().status == 'active'
+            && incoming().meteredRoomName == existing().meteredRoomName
+            && incoming().declinedUids == existing().declinedUids
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'acceptedUids', 'updatedAt'
+            ])
+          )
+          ||
+          (
+            request.auth.uid in existing().invitedUids
+            && !(request.auth.uid in existing().acceptedUids)
+            && !(request.auth.uid in existing().declinedUids)
+            && request.auth.uid in incoming().declinedUids
+            && incoming().declinedUids.size() == existing().declinedUids.size() + 1
+            && incoming().declinedUids.hasAll(existing().declinedUids)
+            && incoming().acceptedUids == existing().acceptedUids
+            && incoming().status == existing().status
+            && incoming().meteredRoomName == existing().meteredRoomName
+            && incoming().diff(existing()).affectedKeys().hasOnly(['declinedUids', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
     }
 
     // =========================================================

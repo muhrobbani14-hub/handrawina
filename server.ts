@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { createAkuAiApi } from './src/server/akuAiApi.ts';
+import { createMeteredGroupCallApi } from './src/server/meteredGroupCallApi.ts';
 import { createTurnCredentialsApi } from './src/server/turnCredentialsApi.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,6 +15,7 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
   app.use(createAkuAiApi());
+  app.use(createMeteredGroupCallApi());
   app.use(createTurnCredentialsApi());
   app.all('/api/*', (_req, res) => {
     res.status(404).json({ error: 'Endpoint API tidak tersedia.' });

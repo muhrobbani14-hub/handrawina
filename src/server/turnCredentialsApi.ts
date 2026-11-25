@@ -1,15 +1,24 @@
 import { createHmac } from 'node:crypto';
 import express from 'express';
-import {
-  applicationDefault,
-  cert,
-  getApps,
-  initializeApp,
-} from 'firebase-admin/app';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-interface TurnCredentialConfig {
+type TurnCredentialConfig =
+  | {
+      mode: 'coturn-rest';
+      urls: string[];
+      sharedSecret: string;
+      ttlSeconds: number;
+    }
+  | {
+      mode: 'static';
+      urls: string[];
+      username: string;
+      password: string;
+    };
+
+interface CoturnRestCredentialConfig {
   urls: string[];
   sharedSecret: string;
   ttlSeconds: number;
@@ -17,7 +26,7 @@ interface TurnCredentialConfig {
 
 export function createTurnCredentials(
   uid: string,
-  config: TurnCredentialConfig,
+  config: CoturnRestCredentialConfig,
   nowSeconds = Math.floor(Date.now() / 1000)
 ): { username: string; credential: string; expiresAt: number } {
   const expiresAt = nowSeconds + config.ttlSeconds;
@@ -28,23 +37,60 @@ export function createTurnCredentials(
   return { username, credential, expiresAt };
 }
 
+export function createTurnIceServer(
+  uid: string,
+  config: TurnCredentialConfig,
+  nowSeconds = Math.floor(Date.now() / 1000)
+): { urls: string[]; username: string; credential: string; expiresAt?: number } {
+  if (config.mode === 'static') {
+    return {
+      urls: config.urls,
+      username: config.username,
+      credential: config.password,
+    };
+  }
+
+  const credentials = createTurnCredentials(uid, config, nowSeconds);
+  return {
+    urls: config.urls,
+    username: credentials.username,
+    credential: credentials.credential,
+    expiresAt: credentials.expiresAt,
+  };
+}
+
 function readTurnCredentialConfig(): TurnCredentialConfig | null {
   const urls = (process.env.TURN_URLS ?? '')
     .split(',')
     .map((url) => url.trim())
     .filter(Boolean);
   const sharedSecret = process.env.TURN_SHARED_SECRET?.trim();
-  if (!urls.length || !sharedSecret) return null;
+  const username = process.env.TURN_USERNAME?.trim();
+  const password = process.env.TURN_PASSWORD?.trim();
+  const hasStaticCredentials = Boolean(username || password);
+  if (!urls.length || (!sharedSecret && !hasStaticCredentials)) return null;
   if (urls.some((url) => !/^turns?:/i.test(url))) {
     throw new Error('TURN_URLS harus berisi alamat turn: atau turns:.');
   }
+
+  if (hasStaticCredentials) {
+    if (sharedSecret) {
+      throw new Error('Gunakan TURN_SHARED_SECRET atau TURN_USERNAME/TURN_PASSWORD, bukan keduanya.');
+    }
+    if (!username || !password) {
+      throw new Error('TURN_USERNAME dan TURN_PASSWORD harus diisi bersama.');
+    }
+    return { mode: 'static', urls, username, password };
+  }
+
+  if (!sharedSecret) return null;
 
   const ttlSeconds = Number(process.env.TURN_CREDENTIAL_TTL_SECONDS ?? 3600);
   if (!Number.isInteger(ttlSeconds) || ttlSeconds < 300 || ttlSeconds > 86400) {
     throw new Error('TURN_CREDENTIAL_TTL_SECONDS harus antara 300 dan 86400.');
   }
 
-  return { urls, sharedSecret, ttlSeconds };
+  return { mode: 'coturn-rest', urls, sharedSecret, ttlSeconds };
 }
 
 function getFirebaseAuth() {
@@ -52,13 +98,8 @@ function getFirebaseAuth() {
   const existingApp = getApps().find((app) => app.name === appName);
   if (existingApp) return getAuth(existingApp);
 
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  const credential = serviceAccountJson
-    ? cert(JSON.parse(serviceAccountJson))
-    : applicationDefault();
   const app = initializeApp(
     {
-      credential,
       projectId: firebaseConfig.projectId,
     },
     appName
@@ -103,16 +144,10 @@ export function createTurnCredentialsApi(): express.Router {
 
     try {
       const decodedToken = await getFirebaseAuth().verifyIdToken(match[1]);
-      const credentials = createTurnCredentials(decodedToken.uid, config);
+      const iceServer = createTurnIceServer(decodedToken.uid, config);
       res.json({
-        iceServers: [
-          {
-            urls: config.urls,
-            username: credentials.username,
-            credential: credentials.credential,
-          },
-        ],
-        expiresAt: credentials.expiresAt,
+        iceServers: [iceServer],
+        ...(iceServer.expiresAt ? { expiresAt: iceServer.expiresAt } : {}),
       });
     } catch (error) {
       const code =

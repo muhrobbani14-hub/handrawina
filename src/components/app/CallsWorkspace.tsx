@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { User } from 'firebase/auth';
 import {
   Camera,
   Lock,
@@ -14,8 +15,10 @@ import {
   VideoOff,
 } from 'lucide-react';
 import type { CallRecord, Conversation } from '../../types/handrawina';
+import type { SavedContactRecord } from '../../utils/phoneAuthAndContacts';
 import { formatDuration } from '../../utils/handrawinaState';
 import { parseHandrawinaJoinInput } from '../../utils/barcodeGenerator';
+import { MeteredGroupCallTestPanel } from './MeteredGroupCallTestPanel';
 
 export interface ActiveCallSession {
   roomCode: string;
@@ -45,6 +48,10 @@ interface CallsWorkspaceProps {
   onLocalStreamReady: (stream: MediaStream) => void;
   onCallSetupError: (message: string) => void;
   onReplaceVideoTrack?: (track: MediaStreamTrack | null) => void;
+  contacts: SavedContactRecord[];
+  firebaseUser: User | null;
+  displayName: string;
+  onGroupCallActiveChange: (active: boolean) => void;
 }
 
 export function CallsWorkspace({
@@ -62,6 +69,10 @@ export function CallsWorkspace({
   onLocalStreamReady,
   onCallSetupError,
   onReplaceVideoTrack,
+  contacts,
+  firebaseUser,
+  displayName,
+  onGroupCallActiveChange,
 }: CallsWorkspaceProps) {
   const [muted, setMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(true);
@@ -286,6 +297,14 @@ export function CallsWorkspace({
             </div>
           </div>
         </header>
+
+        <MeteredGroupCallTestPanel
+          contacts={contacts}
+          firebaseUser={firebaseUser}
+          displayName={displayName}
+          oneToOneCallActive={Boolean(activeCall)}
+          onActiveChange={onGroupCallActiveChange}
+        />
 
         {/* Active WebRTC Video/Voice Call Stage */}
         {activeCall && (

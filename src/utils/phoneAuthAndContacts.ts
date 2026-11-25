@@ -45,6 +45,12 @@ export interface SavedContactRecord {
   publicKeyJwkY: string;
 }
 
+export interface UserDirectoryProfile {
+  uid: string;
+  displayName: string;
+  initials: string;
+}
+
 export interface PhoneDirectoryRecord {
   phoneKey: string;
   phoneNumber: string;

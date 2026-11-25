@@ -1,0 +1,546 @@
+{
+  "entities": {
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Private user account profile, PII, and synchronized app preferences (strictly owner-only).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "maxLength": 160 },
+        "phoneNumber": { "type": "string", "maxLength": 32 },
+        "aboutText": { "type": "string", "maxLength": 200 },
+        "navbarTheme": { "type": "string", "enum": ["navy", "champagne", "orange-light", "bronze"] },
+        "backdropPreset": { "type": "string", "enum": ["obsidian-gold", "emerald-nocturne", "penthouse-dusk"] },
+        "backdropIntensity": { "type": "string", "enum": ["subtle", "balanced", "cinematic"] },
+        "backdropMotion": { "type": "boolean" },
+        "readReceiptsEnabled": { "type": "boolean" },
+        "typingIndicatorsEnabled": { "type": "boolean" },
+        "disappearingMessages": { "type": "string", "enum": ["off", "24h", "7d", "90d"] },
+        "screenLockEnabled": { "type": "boolean" },
+        "alwaysRelayCallsTurn": { "type": "boolean" },
+        "lowDataCalls": { "type": "boolean" },
+        "defaultVideoQuality": { "type": "string", "enum": ["720p", "480p", "360p"] },
+        "soundNotifications": { "type": "boolean" },
+        "messagePreview": { "type": "boolean" },
+        "directoryVisible": { "type": "boolean" },
+        "autoDownloadMedia": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "phoneNumber",
+        "aboutText",
+        "navbarTheme",
+        "backdropPreset",
+        "backdropIntensity",
+        "backdropMotion",
+        "readReceiptsEnabled",
+        "typingIndicatorsEnabled",
+        "disappearingMessages",
+        "screenLockEnabled",
+        "alwaysRelayCallsTurn",
+        "lowDataCalls",
+        "defaultVideoQuality",
+        "soundNotifications",
+        "messagePreview",
+        "autoDownloadMedia",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PairedDeviceRecord": {
+      "title": "PairedDeviceRecord",
+      "description": "Companion device paired under a user account via QR code.",
+      "type": "object",
+      "properties": {
+        "deviceId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "deviceIndex": { "type": "integer" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "platform": { "type": "string", "enum": ["iOS", "Android", "Web", "Desktop"] },
+        "isPrimary": { "type": "boolean" },
+        "online": { "type": "boolean" },
+        "advSignatureShort": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "deviceId",
+        "ownerUid",
+        "deviceIndex",
+        "name",
+        "platform",
+        "isPrimary",
+        "online",
+        "advSignatureShort",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserCallLog": {
+      "title": "UserCallLog",
+      "description": "Personal encrypted call history log entry for a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "conversationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "peerName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "mode": { "type": "string", "enum": ["audio", "video"] },
+        "topology": { "type": "string", "enum": ["P2P-DTLS-SRTP", "TURN-Relay-SRTP", "SFU-SFrame-E2EE"] },
+        "participants": { "type": "array" },
+        "startedAtLabel": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "durationSec": { "type": "integer" },
+        "direction": { "type": "string", "enum": ["outgoing", "incoming"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "conversationId",
+        "peerName",
+        "mode",
+        "topology",
+        "participants",
+        "startedAtLabel",
+        "durationSec",
+        "direction",
+        "createdAt"
+      ]
+    },
+    "SavedContactDoc": {
+      "title": "SavedContactDoc",
+      "description": "WhatsApp-style personal saved contact book entry owned strictly by a user.",
+      "type": "object",
+      "properties": {
+        "contactUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "contactName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "profileName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "phoneNumber": { "type": "string", "maxLength": 32 },
+        "phoneKey": { "type": "string", "maxLength": 15, "pattern": "^([0-9]{8,15})?$" },
+        "initials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "aboutText": { "type": "string", "maxLength": 200 },
+        "fingerprintHex": { "type": "string", "minLength": 16, "maxLength": 64 },
+        "publicKeyJwkX": { "type": "string", "maxLength": 128 },
+        "publicKeyJwkY": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "contactUid",
+        "ownerUid",
+        "contactName",
+        "profileName",
+        "phoneNumber",
+        "phoneKey",
+        "initials",
+        "aboutText",
+        "fingerprintHex",
+        "publicKeyJwkX",
+        "publicKeyJwkY",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PhoneDirectoryEntry": {
+      "title": "PhoneDirectoryEntry",
+      "description": "Single-document exact phone-number lookup record (list strictly forbidden to prevent scraping).",
+      "type": "object",
+      "properties": {
+        "phoneKey": { "type": "string", "minLength": 8, "maxLength": 15, "pattern": "^[0-9]{8,15}$" },
+        "phoneNumber": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "initials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "aboutText": { "type": "string", "maxLength": 200 },
+        "fingerprintHex": { "type": "string", "minLength": 16, "maxLength": 64 },
+        "publicKeyJwkX": { "type": "string", "maxLength": 128 },
+        "publicKeyJwkY": { "type": "string", "maxLength": 128 },
+        "online": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "phoneKey",
+        "phoneNumber",
+        "uid",
+        "displayName",
+        "initials",
+        "aboutText",
+        "fingerprintHex",
+        "publicKeyJwkX",
+        "publicKeyJwkY",
+        "online",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Non-PII public identity and ECDH P-256 public key coordinates for peer E2EE verification.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "initials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "fingerprintHex": { "type": "string", "minLength": 16, "maxLength": 64 },
+        "publicKeyJwkX": { "type": "string", "maxLength": 128 },
+        "publicKeyJwkY": { "type": "string", "maxLength": 128 },
+        "online": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "initials",
+        "fingerprintHex",
+        "publicKeyJwkX",
+        "publicKeyJwkY",
+        "online",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserDirectoryEntry": {
+      "title": "UserDirectoryEntry",
+      "description": "Minimal account profile discoverable by signed-in users; an entry exists only while its owner allows discovery.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "displayNameLower": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "initials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "displayNameLower",
+        "initials",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "QrToken": {
+      "title": "QrToken",
+      "description": "Scannable QR/Barcode capability token for cross-user chat invite, device pairing, or WebRTC video call join.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 8, "maxLength": 32, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mode": { "type": "string", "enum": ["invite", "pair", "call"] },
+        "creatorUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creatorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "creatorInitials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "creatorFingerprint": { "type": "string", "minLength": 16, "maxLength": 64 },
+        "creatorPublicKeyX": { "type": "string", "maxLength": 128 },
+        "creatorPublicKeyY": { "type": "string", "maxLength": 128 },
+        "roomCode": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["active", "redeemed", "expired"] },
+        "redeemedByUid": { "type": "string", "maxLength": 128 },
+        "redeemedByName": { "type": "string", "maxLength": 80 },
+        "conversationId": { "type": "string", "maxLength": 128 },
+        "expiresAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "code",
+        "mode",
+        "creatorUid",
+        "creatorName",
+        "creatorInitials",
+        "creatorFingerprint",
+        "creatorPublicKeyX",
+        "creatorPublicKeyY",
+        "roomCode",
+        "status",
+        "redeemedByUid",
+        "redeemedByName",
+        "conversationId",
+        "expiresAtMs",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ConversationDoc": {
+      "title": "ConversationDoc",
+      "description": "Shared multi-user conversation document linking two or more authenticated Handrawina accounts.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "kind": { "type": "string", "enum": ["direct", "group", "business"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "handle": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "initials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "creatorUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "participantIds": { "type": "array" },
+        "userAUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userAName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "userAInitials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "userAPhone": { "type": "string", "maxLength": 32 },
+        "userAFingerprint": { "type": "string", "minLength": 16, "maxLength": 64 },
+        "userAPublicKeyX": { "type": "string", "maxLength": 128 },
+        "userAPublicKeyY": { "type": "string", "maxLength": 128 },
+        "userBUid": { "type": "string", "maxLength": 128 },
+        "userBName": { "type": "string", "maxLength": 80 },
+        "userBInitials": { "type": "string", "maxLength": 4 },
+        "userBPhone": { "type": "string", "maxLength": 32 },
+        "userBFingerprint": { "type": "string", "maxLength": 64 },
+        "userBPublicKeyX": { "type": "string", "maxLength": 128 },
+        "userBPublicKeyY": { "type": "string", "maxLength": 128 },
+        "senderKeyEpoch": { "type": "integer" },
+        "lastMessageText": { "type": "string", "maxLength": 300 },
+        "lastMessageSenderUid": { "type": "string", "maxLength": 128 },
+        "lastActiveText": { "type": "string", "maxLength": 40 },
+        "typingUid": { "type": "string", "maxLength": 128 },
+        "typingName": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "handle",
+        "initials",
+        "creatorUid",
+        "participantIds",
+        "userAUid",
+        "userAName",
+        "userAInitials",
+        "userAFingerprint",
+        "userAPublicKeyX",
+        "userAPublicKeyY",
+        "userBUid",
+        "userBName",
+        "userBInitials",
+        "userBFingerprint",
+        "userBPublicKeyX",
+        "userBPublicKeyY",
+        "senderKeyEpoch",
+        "lastMessageText",
+        "lastMessageSenderUid",
+        "lastActiveText",
+        "typingUid",
+        "typingName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatMessageDoc": {
+      "title": "ChatMessageDoc",
+      "description": "Real-time encrypted message inside a multi-user conversation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "conversationId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "senderDeviceId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "participantIds": { "type": "array" },
+        "kind": { "type": "string", "enum": ["text", "voice", "media", "product", "system"] },
+        "plaintext": { "type": "string", "maxLength": 4000 },
+        "cipherAlgorithm": { "type": "string", "enum": ["AES-256-GCM"] },
+        "cipherProtocol": { "type": "string", "enum": ["Signal-DoubleRatchet", "SenderKeys-O1"] },
+        "cipherIvBase64": { "type": "string", "maxLength": 128 },
+        "ciphertextBase64": { "type": "string", "maxLength": 8000 },
+        "cipherAad": { "type": "string", "maxLength": 256 },
+        "ratchetStep": { "type": "integer" },
+        "encryptionMode": { "type": "string", "enum": ["ecdh-p256", "room-aes256"] },
+        "voiceDurationSec": { "type": "integer" },
+        "mediaLabel": { "type": "string", "maxLength": 200 },
+        "mediaSizeKb": { "type": "integer" },
+        "status": { "type": "string", "enum": ["sent", "delivered", "read"] },
+        "timestampLabel": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "clientTimestampMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "conversationId",
+        "senderId",
+        "senderName",
+        "senderDeviceId",
+        "participantIds",
+        "kind",
+        "plaintext",
+        "cipherAlgorithm",
+        "cipherProtocol",
+        "cipherIvBase64",
+        "ciphertextBase64",
+        "cipherAad",
+        "ratchetStep",
+        "encryptionMode",
+        "voiceDurationSec",
+        "mediaLabel",
+        "mediaSizeKb",
+        "status",
+        "timestampLabel",
+        "clientTimestampMs",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CallRoomDoc": {
+      "title": "CallRoomDoc",
+      "description": "WebRTC P2P call signaling room containing SDP offer/answer and call lifecycle status.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "minLength": 8, "maxLength": 32, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mode": { "type": "string", "enum": ["audio", "video"] },
+        "status": { "type": "string", "enum": ["ringing", "connected", "ended"] },
+        "conversationId": { "type": "string", "maxLength": 128 },
+        "hostUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hostName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "calleeUid": { "type": "string", "maxLength": 128 },
+        "calleeName": { "type": "string", "maxLength": 80 },
+        "participantIds": { "type": "array" },
+        "offerSdp": { "type": "string", "maxLength": 32000 },
+        "offerType": { "type": "string", "maxLength": 16 },
+        "answerSdp": { "type": "string", "maxLength": 32000 },
+        "answerType": { "type": "string", "maxLength": 16 },
+        "protectIpViaTurn": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "roomCode",
+        "mode",
+        "status",
+        "conversationId",
+        "hostUid",
+        "hostName",
+        "calleeUid",
+        "calleeName",
+        "participantIds",
+        "offerSdp",
+        "offerType",
+        "answerSdp",
+        "answerType",
+        "protectIpViaTurn",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CallSignalBucket": {
+      "title": "CallSignalBucket",
+      "description": "Bounded ICE candidate bundle for either caller or callee in a WebRTC room.",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["caller", "callee"] },
+        "senderUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "candidateStrings": { "type": "array" },
+        "sdpMids": { "type": "array" },
+        "sdpMLineIndexes": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "role",
+        "senderUid",
+        "candidateStrings",
+        "sdpMids",
+        "sdpMLineIndexes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StatusUpdateDoc": {
+      "title": "StatusUpdateDoc",
+      "description": "Multi-user status card with 4 luxury themes visible only to the author and connected peers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "authorInitials": { "type": "string", "minLength": 1, "maxLength": 4 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "captionTag": { "type": "string", "maxLength": 48 },
+        "theme": { "type": "string", "enum": ["navy", "champagne", "orange-light", "bronze"] },
+        "audience": { "type": "string", "enum": ["all-contacts", "close-circle", "selected-groups"] },
+        "visibleToUids": { "type": "array" },
+        "viewerUids": { "type": "array" },
+        "viewerNames": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "authorId",
+        "authorName",
+        "authorInitials",
+        "text",
+        "captionTag",
+        "theme",
+        "audience",
+        "visibleToUids",
+        "viewerUids",
+        "viewerNames",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Private user account PII and app settings (owner-only)."
+    },
+    "/users/{userId}/devices/{deviceId}": {
+      "schema": { "$ref": "#/entities/PairedDeviceRecord" },
+      "description": "Paired companion devices linked to a user account."
+    },
+    "/users/{userId}/callLogs/{callId}": {
+      "schema": { "$ref": "#/entities/UserCallLog" },
+      "description": "Encrypted call history owned by a user."
+    },
+    "/users/{userId}/contacts/{contactUid}": {
+      "schema": { "$ref": "#/entities/SavedContactDoc" },
+      "description": "Personal saved WhatsApp-style contacts owned strictly by a user."
+    },
+    "/phoneDirectory/{phoneKey}": {
+      "schema": { "$ref": "#/entities/PhoneDirectoryEntry" },
+      "description": "Single-document exact phone number lookup directory for adding friends without QR (list forbidden)."
+    },
+    "/publicProfiles/{userId}": {
+      "schema": { "$ref": "#/entities/PublicProfile" },
+      "description": "Non-PII public identity and ECDH P-256 public key for peer verification."
+    },
+    "/userDirectory/{userId}": {
+      "schema": { "$ref": "#/entities/UserDirectoryEntry" },
+      "description": "Minimal opt-out account discovery directory, readable only to authenticated users with bounded queries."
+    },
+    "/qrTokens/{tokenCode}": {
+      "schema": { "$ref": "#/entities/QrToken" },
+      "description": "Scannable QR/Barcode capability tokens for chat pairing, device pairing, or WebRTC rooms."
+    },
+    "/conversations/{convId}": {
+      "schema": { "$ref": "#/entities/ConversationDoc" },
+      "description": "Multi-user conversation threads connecting two or more authenticated accounts."
+    },
+    "/conversations/{convId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessageDoc" },
+      "description": "Encrypted messages within a conversation thread."
+    },
+    "/callRooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/CallRoomDoc" },
+      "description": "WebRTC SDP offer/answer signaling rooms."
+    },
+    "/callRooms/{roomCode}/signals/{signalRole}": {
+      "schema": { "$ref": "#/entities/CallSignalBucket" },
+      "description": "Bounded ICE candidate bundles for caller and callee."
+    },
+    "/statuses/{statusId}": {
+      "schema": { "$ref": "#/entities/StatusUpdateDoc" },
+      "description": "Multi-user status cards shared strictly with connected peers."
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -20,7 +20,12 @@ import {
   normalizePhoneForAuth,
   type PhoneDirectoryRecord,
   type SavedContactRecord,
+  type UserDirectoryProfile,
 } from '../../utils/phoneAuthAndContacts';
+import type {
+  UserDirectoryCursor,
+  UserDirectoryPage,
+} from '../../services/handrawinaFirestore';
 
 export type ContactModalView = 'list' | 'new-contact' | 'new-group';
 
@@ -28,8 +33,18 @@ interface WhatsAppContactModalProps {
   open: boolean;
   initialView?: ContactModalView;
   currentUserPhone: string;
+  currentUserUid: string;
   contacts: SavedContactRecord[];
+  directoryVisible: boolean;
   onClose: () => void;
+  onSearchUserDirectory: (
+    searchText: string,
+    cursor?: UserDirectoryCursor | null
+  ) => Promise<UserDirectoryPage>;
+  onAddDirectoryContact: (
+    profile: UserDirectoryProfile
+  ) => Promise<{ ok: boolean; message: string }>;
+  onSetDirectoryVisibility: (visible: boolean) => Promise<void>;
   onOpenQrOptional?: () => void;
   onLookupPhone: (
     phoneInput: string,
@@ -59,8 +74,13 @@ export function WhatsAppContactModal({
   open,
   initialView = 'list',
   currentUserPhone,
+  currentUserUid,
   contacts,
+  directoryVisible,
   onClose,
+  onSearchUserDirectory,
+  onAddDirectoryContact,
+  onSetDirectoryVisibility,
   onOpenQrOptional,
   onLookupPhone,
   onSaveContactAndChat,
@@ -82,6 +102,16 @@ export function WhatsAppContactModal({
   const [foundPeer, setFoundPeer] = useState<PhoneDirectoryRecord | null>(null);
   const [notFoundPhone, setNotFoundPhone] = useState<string | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [directoryProfiles, setDirectoryProfiles] = useState<UserDirectoryProfile[]>([]);
+  const [directoryCursor, setDirectoryCursor] = useState<UserDirectoryCursor | null>(null);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryHasMore, setDirectoryHasMore] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
+  const [directoryNotice, setDirectoryNotice] = useState<string | null>(null);
+  const [directoryVisibilityBusy, setDirectoryVisibilityBusy] = useState(false);
+  const [addingDirectoryUid, setAddingDirectoryUid] = useState<string | null>(null);
+  const [addedDirectoryUids, setAddedDirectoryUids] = useState<string[]>([]);
+  const directoryRequestIdRef = useRef(0);
 
   // New Group form state
   const [groupName, setGroupName] = useState('');
@@ -102,6 +132,7 @@ export function WhatsAppContactModal({
       setGroupName('');
       setSelectedMemberUids([]);
       setGroupError(null);
+      setAddedDirectoryUids([]);
     }
   }, [open, initialView]);
 
@@ -114,9 +145,71 @@ export function WhatsAppContactModal({
     return () => window.removeEventListener('keydown', handleKey);
   }, [open, onClose]);
 
+  const loadDirectory = useCallback(
+    async (searchText: string, cursor: UserDirectoryCursor | null = null) => {
+      const requestId = ++directoryRequestIdRef.current;
+      setDirectoryLoading(true);
+      setDirectoryError(null);
+      try {
+        const page = await onSearchUserDirectory(searchText, cursor);
+        if (requestId !== directoryRequestIdRef.current) return;
+        setDirectoryProfiles((current) => {
+          if (!cursor) return page.profiles;
+          const currentUids = new Set(current.map((profile) => profile.uid));
+          return [
+            ...current,
+            ...page.profiles.filter((profile) => !currentUids.has(profile.uid)),
+          ];
+        });
+        setDirectoryCursor(page.nextCursor);
+        setDirectoryHasMore(Boolean(page.nextCursor));
+      } catch (error) {
+        if (requestId === directoryRequestIdRef.current) {
+          setDirectoryError(
+            error instanceof Error ? error.message : 'Gagal memuat pengguna Handrawina.'
+          );
+        }
+      } finally {
+        if (requestId === directoryRequestIdRef.current) setDirectoryLoading(false);
+      }
+    },
+    [onSearchUserDirectory]
+  );
+
+  useEffect(() => {
+    if (!open || view !== 'list') {
+      directoryRequestIdRef.current += 1;
+      return;
+    }
+    setDirectoryProfiles([]);
+    setDirectoryCursor(null);
+    setDirectoryHasMore(false);
+    const timer = window.setTimeout(() => {
+      void loadDirectory(search, null);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      directoryRequestIdRef.current += 1;
+    };
+  }, [open, view, search, loadDirectory]);
+
   const filteredContacts = useMemo(
     () => filterSavedContacts(contacts, search),
     [contacts, search]
+  );
+  const savedContactUids = useMemo(
+    () => new Set(contacts.map((contact) => contact.contactUid)),
+    [contacts]
+  );
+  const availableDirectoryProfiles = useMemo(
+    () =>
+      directoryProfiles.filter(
+        (profile) =>
+          profile.uid !== currentUserUid &&
+          !savedContactUids.has(profile.uid) &&
+          !addedDirectoryUids.includes(profile.uid)
+      ),
+    [addedDirectoryUids, currentUserUid, directoryProfiles, savedContactUids]
   );
 
   if (!open) return null;
@@ -193,6 +286,53 @@ export function WhatsAppContactModal({
     if (res.ok && res.conversationId) {
       onSelectConversation?.(res.conversationId);
       onClose();
+    }
+  };
+
+  const handleAddDirectoryContact = async (profile: UserDirectoryProfile) => {
+    setAddingDirectoryUid(profile.uid);
+    setDirectoryError(null);
+    setDirectoryNotice(null);
+    try {
+      const result = await onAddDirectoryContact(profile);
+      if (!result.ok) {
+        setDirectoryError(result.message);
+        return;
+      }
+      setAddedDirectoryUids((current) => [...current, profile.uid]);
+      setDirectoryNotice(result.message);
+    } catch (error) {
+      setDirectoryError(
+        error instanceof Error ? error.message : 'Gagal menambahkan kontak.'
+      );
+    } finally {
+      setAddingDirectoryUid(null);
+    }
+  };
+
+  const handleDirectoryVisibilityChange = async (visible: boolean) => {
+    setDirectoryVisibilityBusy(true);
+    setDirectoryError(null);
+    setDirectoryNotice(null);
+    try {
+      await onSetDirectoryVisibility(visible);
+      setDirectoryNotice(
+        visible
+          ? 'Akun Anda sekarang dapat ditemukan oleh pengguna yang masuk.'
+          : 'Akun Anda disembunyikan dari direktori.'
+      );
+    } catch (error) {
+      setDirectoryError(
+        error instanceof Error ? error.message : 'Gagal mengubah visibilitas akun.'
+      );
+    } finally {
+      setDirectoryVisibilityBusy(false);
+    }
+  };
+
+  const handleLoadMoreDirectory = () => {
+    if (directoryCursor && !directoryLoading) {
+      void loadDirectory(search, directoryCursor);
     }
   };
 
@@ -283,6 +423,17 @@ export function WhatsAppContactModal({
         <div className="p-5 overflow-y-auto flex-1 space-y-4">
           {view === 'list' && (
             <>
+              {directoryError && (
+                <p role="alert" className="rounded-xl border border-red-400/35 bg-red-950/60 p-3 text-xs text-red-200">
+                  {directoryError}
+                </p>
+              )}
+              {directoryNotice && (
+                <p role="status" className="rounded-xl border border-emerald-400/25 bg-emerald-950/40 p-3 text-xs text-emerald-200">
+                  {directoryNotice}
+                </p>
+              )}
+
               {/* Search bar */}
               <div className="relative">
                 <Search
@@ -293,7 +444,7 @@ export function WhatsAppContactModal({
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Cari nama atau nomor telepon..."
+                  placeholder="Cari kontak, nomor, atau awalan nama pengguna..."
                   className="w-full pl-9 pr-3 py-2 text-xs bg-stone-900/90 border border-amber-200/15 rounded-xl text-stone-100 placeholder:text-stone-500 focus:outline-none focus:border-[#FDBA74]"
                 />
               </div>
@@ -355,6 +506,25 @@ export function WhatsAppContactModal({
                 )}
               </div>
 
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-amber-200/15 bg-stone-900/65 px-3 py-3">
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium text-stone-100">
+                    Tampilkan akun saya di direktori
+                  </span>
+                  <span className="mt-1 block text-[11px] leading-relaxed text-stone-400">
+                    Nama dan inisial ditampilkan; direktori hanya dapat dicari oleh pengguna yang masuk.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="Tampilkan akun saya di direktori pengguna"
+                  checked={directoryVisible}
+                  disabled={directoryVisibilityBusy}
+                  onChange={(event) => void handleDirectoryVisibilityChange(event.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-amber-400 disabled:opacity-50"
+                />
+              </label>
+
               {/* Saved Contacts Section */}
               <div className="pt-2 space-y-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-[#FDBA74]/85">
@@ -366,7 +536,7 @@ export function WhatsAppContactModal({
                     <Phone className="w-6 h-6 text-stone-500 mx-auto" aria-hidden="true" />
                     <p className="text-xs text-stone-400 leading-relaxed">
                       {contacts.length === 0
-                        ? 'Belum ada kontak tersimpan. Ketuk "Kontak Baru" di atas lalu masukkan nomor telepon teman Anda yang sudah mendaftar di Handrawina.'
+                        ? 'Belum ada kontak tersimpan. Tambahkan pengguna dari daftar di bawah, atau gunakan "Kontak Baru" untuk mencari lewat nomor telepon.'
                         : 'Tidak ada kontak yang cocok dengan pencarian Anda.'}
                     </p>
                   </div>
@@ -390,7 +560,7 @@ export function WhatsAppContactModal({
                               {contact.contactName}
                             </div>
                             <div className="text-xs font-mono text-stone-300 truncate">
-                              {contact.phoneNumber}
+                              {contact.phoneNumber || 'Akun Handrawina'}
                             </div>
                             {contact.aboutText && (
                               <div className="text-[11px] text-stone-400 truncate">
@@ -422,6 +592,63 @@ export function WhatsAppContactModal({
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+
+              <div className="pt-2 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-[#FDBA74]/85">
+                    Pengguna Handrawina
+                  </div>
+                  {directoryLoading && (
+                    <span className="text-[11px] text-stone-400">Memuat...</span>
+                  )}
+                </div>
+
+                {availableDirectoryProfiles.length === 0 && !directoryLoading ? (
+                  <p className="rounded-xl border border-stone-800 bg-stone-900/60 p-4 text-center text-xs text-stone-400">
+                    {directoryProfiles.length === 0
+                      ? 'Belum ada pengguna lain yang dapat ditemukan.'
+                      : 'Semua hasil sudah ada di kontak Anda atau tidak cocok dengan pencarian.'}
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {availableDirectoryProfiles.map((profile) => (
+                      <div
+                        key={profile.uid}
+                        className="flex items-center gap-3 rounded-xl border border-stone-800/80 bg-stone-900/70 p-2.5"
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#FDBA74]/35 bg-gradient-to-br from-[#3B2318] to-[#140C0A] text-xs font-bold text-[#FFEDD5]">
+                          {profile.initials}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-amber-50">
+                            {profile.displayName}
+                          </div>
+                          <div className="text-[11px] text-stone-400">Pengguna Handrawina</div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={addingDirectoryUid !== null}
+                          onClick={() => void handleAddDirectoryContact(profile)}
+                          className="shrink-0 rounded-lg border border-amber-200/25 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-200/10 disabled:opacity-50"
+                        >
+                          {addingDirectoryUid === profile.uid ? 'Menambahkan...' : 'Tambah'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {directoryHasMore && (
+                  <button
+                    type="button"
+                    disabled={directoryLoading}
+                    onClick={handleLoadMoreDirectory}
+                    className="w-full rounded-lg border border-stone-700 px-3 py-2 text-xs text-stone-200 hover:bg-stone-800 disabled:opacity-50"
+                  >
+                    {directoryLoading ? 'Memuat...' : 'Muat pengguna lainnya'}
+                  </button>
                 )}
               </div>
             </>

@@ -4,13 +4,20 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
+  runTransaction,
   serverTimestamp,
+  startAfter,
   setDoc,
   updateDoc,
   where,
   writeBatch,
+  type DocumentData,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -54,6 +61,7 @@ import {
   normalizePhoneForAuth,
   type PhoneDirectoryRecord,
   type SavedContactRecord,
+  type UserDirectoryProfile,
 } from '../utils/phoneAuthAndContacts';
 import type { JoinBarcodeMode, MintedJoinToken } from '../components/app/JoinBarcodeModal';
 
@@ -66,8 +74,18 @@ const DEFAULT_PRIVATE_PROFILE_PREFERENCES = {
   defaultVideoQuality: '720p',
   soundNotifications: true,
   messagePreview: false,
+  directoryVisible: true,
   autoDownloadMedia: false,
 } as const;
+
+export type UserDirectoryCursor = QueryDocumentSnapshot<DocumentData>;
+
+export interface UserDirectoryPage {
+  profiles: UserDirectoryProfile[];
+  nextCursor: UserDirectoryCursor | null;
+}
+
+const USER_DIRECTORY_PAGE_SIZE = 25;
 
 export interface PersistentIdentityKey {
   keyPair: CryptoKeyPair;
@@ -151,10 +169,11 @@ export interface HydratedUserSession {
   displayName: string;
   phoneNumber: string;
   settings: AppSettings;
+  directoryVisible: boolean;
 }
 
 /**
- * Ensures /users/{uid}, /publicProfiles/{uid}, and primary device doc exist and stay in sync.
+ * Ensures private/public profiles, the discoverable directory entry, and primary device stay in sync.
  */
 export async function bootstrapAuthenticatedUser(
   user: User,
@@ -176,11 +195,13 @@ export async function bootstrapAuthenticatedUser(
   let displayName = defaultDisplayName;
   let phoneNumber = phoneIdentity ? phoneIdentity.formatted : '+62 812-0000-0000';
   let settings: AppSettings = { ...DEFAULT_APP_SETTINGS };
+  let directoryVisible = true;
 
   try {
     const existingSnap = await getDoc(userRef);
     if (existingSnap.exists()) {
       const data = existingSnap.data();
+      directoryVisible = typeof data.directoryVisible === 'boolean' ? data.directoryVisible : true;
       displayName = clampStr(String(data.displayName ?? defaultDisplayName), 80, defaultDisplayName);
       phoneNumber = phoneIdentity
         ? phoneIdentity.formatted
@@ -196,6 +217,12 @@ export async function bootstrapAuthenticatedUser(
           ? (data.navbarTheme as StatusTheme)
           : DEFAULT_APP_SETTINGS.navbarTheme,
       };
+      if (typeof data.directoryVisible !== 'boolean') {
+        await updateDoc(userRef, {
+          directoryVisible,
+          updatedAt: serverTimestamp(),
+        });
+      }
     } else {
       await setDoc(userRef, {
         uid,
@@ -249,6 +276,37 @@ export async function bootstrapAuthenticatedUser(
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, pubPath);
+  }
+
+  const directoryRef = doc(db, 'userDirectory', uid);
+  const directoryPath = `userDirectory/${uid}`;
+  try {
+    const directorySnap = await getDoc(directoryRef);
+    if (directoryVisible) {
+      const directoryProfile = {
+        uid,
+        displayName,
+        displayNameLower: displayName.toLowerCase(),
+        initials,
+        updatedAt: serverTimestamp(),
+      };
+      if (directorySnap.exists()) {
+        await updateDoc(directoryRef, directoryProfile);
+      } else {
+        await setDoc(directoryRef, {
+          ...directoryProfile,
+          createdAt: serverTimestamp(),
+        });
+      }
+    } else if (directorySnap.exists()) {
+      await deleteDoc(directoryRef);
+    }
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      directoryVisible ? OperationType.WRITE : OperationType.DELETE,
+      directoryPath
+    );
   }
 
   // Sync exact phone lookup entry in /phoneDirectory/{phoneKey} so friends can add by phone number
@@ -313,7 +371,7 @@ export async function bootstrapAuthenticatedUser(
     handleFirestoreError(error, OperationType.WRITE, `users/${uid}/devices/${primaryDeviceId}`);
   }
 
-  return { displayName, phoneNumber, settings };
+  return { displayName, phoneNumber, settings, directoryVisible };
 }
 
 export async function updateUserPrivateSettings(
@@ -356,6 +414,16 @@ export async function updateUserPrivateSettings(
         initials: deriveInitials(cleanName),
         updatedAt: serverTimestamp(),
       });
+      const directoryRef = doc(db, 'userDirectory', safeUid);
+      const directorySnap = await getDoc(directoryRef);
+      if (directorySnap.exists()) {
+        await updateDoc(directoryRef, {
+          displayName: cleanName,
+          displayNameLower: cleanName.toLowerCase(),
+          initials: deriveInitials(cleanName),
+          updatedAt: serverTimestamp(),
+        });
+      }
     }
     if (params.phoneNumber && (params.displayName !== undefined || params.settings?.aboutText !== undefined)) {
       const parsedPhone = normalizePhoneForAuth(params.phoneNumber);
@@ -374,6 +442,102 @@ export async function updateUserPrivateSettings(
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `users/${safeUid}`);
+  }
+}
+
+export async function updateUserDirectoryVisibility(uid: string, visible: boolean): Promise<void> {
+  const safeUid = sanitizeFirestoreId(uid, 'user');
+  const userRef = doc(db, 'users', safeUid);
+  const directoryRef = doc(db, 'userDirectory', safeUid);
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const userSnap = await transaction.get(userRef);
+      if (!userSnap.exists()) {
+        throw new Error('Profil akun tidak ditemukan.');
+      }
+      const directorySnap = await transaction.get(directoryRef);
+      const userData = userSnap.data();
+      const displayName = clampStr(
+        String(userData.displayName ?? 'Pengguna Handrawina'),
+        BLUEPRINT_LIMITS.displayNameMax,
+        'Pengguna Handrawina'
+      );
+      const initials = deriveInitials(displayName);
+
+      transaction.update(userRef, {
+        directoryVisible: visible,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (!visible) {
+        if (directorySnap.exists()) transaction.delete(directoryRef);
+        return;
+      }
+
+      const profile = {
+        uid: safeUid,
+        displayName,
+        displayNameLower: displayName.toLowerCase(),
+        initials,
+        updatedAt: serverTimestamp(),
+      };
+      if (directorySnap.exists()) {
+        transaction.update(directoryRef, profile);
+      } else {
+        transaction.set(directoryRef, {
+          ...profile,
+          createdAt: serverTimestamp(),
+        });
+      }
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `users/${safeUid}`);
+  }
+}
+
+export async function searchUserDirectoryPage(
+  searchText: string,
+  cursor: UserDirectoryCursor | null = null
+): Promise<UserDirectoryPage> {
+  const normalizedSearch = searchText.trim().toLowerCase().slice(0, 80);
+  const constraints = [
+    ...(normalizedSearch
+      ? [
+          where('displayNameLower', '>=', normalizedSearch),
+          where('displayNameLower', '<=', `${normalizedSearch}\uf8ff`),
+        ]
+      : []),
+    orderBy('displayNameLower'),
+    ...(cursor ? [startAfter(cursor)] : []),
+    limit(USER_DIRECTORY_PAGE_SIZE + 1),
+  ];
+
+  try {
+    const snapshot = await getDocs(
+      query(collection(db, 'userDirectory'), ...constraints)
+    );
+    const hasMore = snapshot.docs.length > USER_DIRECTORY_PAGE_SIZE;
+    const pageDocs = snapshot.docs.slice(0, USER_DIRECTORY_PAGE_SIZE);
+    const profiles = pageDocs.map((profileDoc): UserDirectoryProfile => {
+      const data = profileDoc.data();
+      const displayName = clampStr(
+        String(data.displayName ?? 'Pengguna Handrawina'),
+        BLUEPRINT_LIMITS.displayNameMax,
+        'Pengguna Handrawina'
+      );
+      return {
+        uid: String(data.uid ?? profileDoc.id),
+        displayName,
+        initials: clampStr(String(data.initials ?? deriveInitials(displayName)), 4, 'PH'),
+      };
+    });
+    return {
+      profiles,
+      nextCursor: hasMore ? pageDocs[pageDocs.length - 1] ?? null : null,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'userDirectory');
   }
 }
 
@@ -1354,8 +1518,8 @@ export async function saveUserContactOnly(params: {
   const contactUid = sanitizeFirestoreId(params.contactUid, 'peer');
   const cleanContactName = clampStr(params.contactName, BLUEPRINT_LIMITS.displayNameMax, 'Kontak Baru');
   const cleanProfileName = clampStr(params.profileName, BLUEPRINT_LIMITS.displayNameMax, cleanContactName);
-  const cleanPhoneKey = params.phoneKey.replace(/\D/g, '').slice(0, 15);
-  if (cleanPhoneKey.length < 8) {
+  const requestedPhoneKey = params.phoneKey.replace(/\D/g, '').slice(0, 15);
+  if (requestedPhoneKey && requestedPhoneKey.length < 8) {
     throw new Error('Format nomor telepon kontak tidak valid.');
   }
 
@@ -1364,13 +1528,18 @@ export async function saveUserContactOnly(params: {
   const existing = await getDoc(ref).catch((error: unknown) => {
     handleFirestoreError(error, OperationType.GET, path);
   });
+  const existingData = existing.exists() ? existing.data() : {};
+  const cleanPhoneKey = requestedPhoneKey || String(existingData.phoneKey ?? '');
+  const cleanPhoneNumber =
+    clampStr(params.phoneNumber, BLUEPRINT_LIMITS.phoneMax, '') ||
+    String(existingData.phoneNumber ?? (cleanPhoneKey ? `+${cleanPhoneKey}` : ''));
 
   if (existing.exists()) {
     try {
       await updateDoc(ref, {
         contactName: cleanContactName,
         profileName: cleanProfileName,
-        phoneNumber: clampStr(params.phoneNumber, BLUEPRINT_LIMITS.phoneMax, `+${cleanPhoneKey}`),
+        phoneNumber: cleanPhoneNumber,
         phoneKey: cleanPhoneKey,
         initials: deriveInitials(cleanContactName),
         aboutText: clampStr(params.aboutText, BLUEPRINT_LIMITS.aboutMax, ''),
@@ -1389,7 +1558,7 @@ export async function saveUserContactOnly(params: {
         ownerUid,
         contactName: cleanContactName,
         profileName: cleanProfileName,
-        phoneNumber: clampStr(params.phoneNumber, BLUEPRINT_LIMITS.phoneMax, `+${cleanPhoneKey}`),
+        phoneNumber: cleanPhoneNumber,
         phoneKey: cleanPhoneKey,
         initials: deriveInitials(cleanContactName),
         aboutText: clampStr(params.aboutText, BLUEPRINT_LIMITS.aboutMax, ''),
@@ -1403,6 +1572,45 @@ export async function saveUserContactOnly(params: {
       handleFirestoreError(error, OperationType.CREATE, path);
     }
   }
+}
+
+export async function saveUserDirectoryContact(
+  ownerUid: string,
+  profile: UserDirectoryProfile
+): Promise<void> {
+  const safeOwner = sanitizeFirestoreId(ownerUid, 'user');
+  const safeContact = sanitizeFirestoreId(profile.uid, 'peer');
+  if (safeOwner === safeContact) {
+    throw new Error('Anda tidak dapat menambahkan akun sendiri.');
+  }
+
+  const profileSnap = await getDoc(doc(db, 'publicProfiles', safeContact)).catch(
+    (error: unknown) => {
+      handleFirestoreError(error, OperationType.GET, `publicProfiles/${safeContact}`);
+    }
+  );
+  if (!profileSnap.exists() || profileSnap.data().uid !== safeContact) {
+    throw new Error('Profil publik pengguna tidak ditemukan.');
+  }
+  const publicProfile = profileSnap.data();
+  const displayName = clampStr(
+    String(publicProfile.displayName ?? profile.displayName),
+    BLUEPRINT_LIMITS.displayNameMax,
+    profile.displayName
+  );
+
+  await saveUserContactOnly({
+    ownerUid: safeOwner,
+    contactUid: safeContact,
+    contactName: displayName,
+    profileName: displayName,
+    phoneNumber: '',
+    phoneKey: '',
+    aboutText: '',
+    fingerprintHex: String(publicProfile.fingerprintHex ?? '0000000000000000'),
+    publicKeyJwkX: String(publicProfile.publicKeyJwkX ?? ''),
+    publicKeyJwkY: String(publicProfile.publicKeyJwkY ?? ''),
+  });
 }
 
 export async function deleteUserContact(ownerUid: string, contactUid: string): Promise<void> {

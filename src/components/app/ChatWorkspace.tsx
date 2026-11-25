@@ -36,7 +36,12 @@ import type {
 import type {
   PhoneDirectoryRecord,
   SavedContactRecord,
+  UserDirectoryProfile,
 } from '../../utils/phoneAuthAndContacts';
+import type {
+  UserDirectoryCursor,
+  UserDirectoryPage,
+} from '../../services/handrawinaFirestore';
 import { computeSafetyNumber } from '../../crypto/e2eeEngine';
 import {
   filterConversations,
@@ -77,6 +82,15 @@ interface ChatWorkspaceProps {
   onOpenBackdropSettings: () => void;
   businessProducts: BusinessProduct[];
   contacts?: SavedContactRecord[];
+  directoryVisible: boolean;
+  onSearchUserDirectory: (
+    searchText: string,
+    cursor?: UserDirectoryCursor | null
+  ) => Promise<UserDirectoryPage>;
+  onAddDirectoryContact: (
+    profile: UserDirectoryProfile
+  ) => Promise<{ ok: boolean; message: string }>;
+  onSetDirectoryVisibility: (visible: boolean) => Promise<void>;
   unsavedPeer?: UnsavedPeerInfo | null;
   onLookupPhone: (
     phoneInput: string,
@@ -133,6 +147,10 @@ export function ChatWorkspace({
   onOpenBackdropSettings,
   businessProducts,
   contacts = [],
+  directoryVisible,
+  onSearchUserDirectory,
+  onAddDirectoryContact,
+  onSetDirectoryVisibility,
   unsavedPeer = null,
   onLookupPhone,
   onSaveContactAndChat,
@@ -1125,7 +1143,12 @@ export function ChatWorkspace({
         open={showNewModal}
         initialView={newModalView}
         currentUserPhone={account.phoneNumber}
+        currentUserUid={account.accountId}
         contacts={contacts}
+        directoryVisible={directoryVisible}
+        onSearchUserDirectory={onSearchUserDirectory}
+        onAddDirectoryContact={onAddDirectoryContact}
+        onSetDirectoryVisibility={onSetDirectoryVisibility}
         onClose={() => setShowNewModal(false)}
         onOpenQrOptional={() => {
           setShowNewModal(false);

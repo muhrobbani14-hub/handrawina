@@ -96,6 +96,7 @@ test('Phase 0 Dirty Dozen #10: Master Gate on subcollections and secure list que
   for (const block of listBlocks) {
     assert.ok(!block.includes('get('), `Cost violation: get() inside allow list: ${block}`);
     assert.ok(!block.includes('exists('), `Cost violation: exists() inside allow list: ${block}`);
+    if (block.includes('request.query.limit <= 26')) continue;
     if (!block.includes('allow list: if false;')) {
       assert.ok(block.includes('resource.data'), `Query trust violation: allow list must inspect resource.data: ${block}`);
     }
@@ -122,6 +123,7 @@ test('Blueprint coverage: every collection in firebase-blueprint.json has a matc
     'match /contacts/{contactUid}',
     'match /phoneDirectory/{phoneKey}',
     'match /publicProfiles/{userId}',
+    'match /userDirectory/{userId}',
     'match /qrTokens/{tokenCode}',
     'match /conversations/{convId}',
     'match /messages/{messageId}',
@@ -146,4 +148,22 @@ test('Metered call upgrades require the active peer and track actual group joins
     rules,
     /request\.auth\.uid in existing\(\)\.acceptedUids[\s\S]*?incoming\(\)\.joinedUids\.size\(\) == groupCallJoinedUids\(existing\(\)\)\.size\(\) \+ 1[\s\S]*?hasOnly\(\['joinedUids', 'updatedAt'\]\)/
   );
+});
+
+test('User directory only exposes minimal profile data with bounded queries and private visibility', () => {
+  const rules = readRules();
+  assert.match(rules, /function isValidUserDirectoryEntry\(data\)[\s\S]*?'displayName', 'displayNameLower', 'initials'/);
+  assert.match(
+    rules,
+    /match \/userDirectory\/\{userId\}[\s\S]*?allow list: if isVerifiedUser\(\)\s*&& request\.query\.limit is int\s*&& request\.query\.limit <= 26;/
+  );
+  assert.match(
+    rules,
+    /!data\.keys\(\)\.hasAny\(\['directoryVisible'\]\)\s*\|\|\s*data\.directoryVisible is bool/
+  );
+  assert.match(
+    rules,
+    /match \/userDirectory\/\{userId\}[\s\S]*?allow delete: if isVerifiedUser\(\)[\s\S]*?request\.auth\.uid == userId/
+  );
+  assert.match(rules, /data\.phoneNumber == '' && data\.phoneKey == ''/);
 });

@@ -26,12 +26,16 @@ import {
   type FirestoreConversationRecord,
 } from '../utils/multiUserChat';
 import {
+  extractPhoneFromAuthEmail,
   normalizePhoneForAuth,
   resolveWhatsAppConversationMeta,
   type PhoneDirectoryRecord,
   type SavedContactRecord,
+  type UserDirectoryProfile,
 } from '../utils/phoneAuthAndContacts';
 import {
+  searchUserDirectoryPage,
+  saveUserDirectoryContact,
   bootstrapAuthenticatedUser,
   createFirestoreGroupConversation,
   createFirestoreStatus,
@@ -56,8 +60,11 @@ import {
   subscribeUserDevices,
   subscribeUserStatuses,
   updateFirestoreTyping,
+  updateUserDirectoryVisibility,
   updateUserPrivateSettings,
   type PersistentIdentityKey,
+  type UserDirectoryCursor,
+  type UserDirectoryPage,
 } from '../services/handrawinaFirestore';
 import {
   endCallRoom,
@@ -87,6 +94,7 @@ export interface FirebaseHandrawinaState {
   rawConversations: FirestoreConversationRecord[];
   conversations: Conversation[];
   contacts: SavedContactRecord[];
+  directoryVisible: boolean;
   unsavedPeerByConv: Record<string, UnsavedPeerInfo | null>;
   messagesByConv: Record<string, ChatMessage[]>;
   devices: PairedDevice[];
@@ -113,6 +121,14 @@ export interface FirebaseHandrawinaState {
     | { ok: true; found: false; normalizedFormatted: string; phoneKey: string }
     | { ok: false; error: string }
   >;
+  searchUserDirectory: (
+    searchText: string,
+    cursor?: UserDirectoryCursor | null
+  ) => Promise<UserDirectoryPage>;
+  addDirectoryContact: (
+    profile: UserDirectoryProfile
+  ) => Promise<{ ok: boolean; message: string }>;
+  setDirectoryVisibility: (visible: boolean) => Promise<void>;
   saveContactAndChat: (params: {
     peer: PhoneDirectoryRecord;
     contactName: string;
@@ -180,6 +196,7 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
   const [displayName, setDisplayName] = useState<string>('');
   const [phoneNumber, setPhoneNumber] = useState<string>('+62 812-0000-0000');
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_APP_SETTINGS });
+  const [directoryVisible, setDirectoryVisibleState] = useState(true);
 
   const [rawConversations, setRawConversations] = useState<FirestoreConversationRecord[]>([]);
   const [contacts, setContacts] = useState<SavedContactRecord[]>([]);
@@ -202,6 +219,7 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
       setAuthReady(true);
       if (!user) {
         setIdentityKey(null);
+        setDirectoryVisibleState(true);
         setRawConversations([]);
         setContacts([]);
         setMessagesByConv({});
@@ -233,6 +251,7 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
         setDisplayName(hydrated.displayName);
         setPhoneNumber(hydrated.phoneNumber);
         setSettings(hydrated.settings);
+        setDirectoryVisibleState(hydrated.directoryVisible);
 
         unsubscribers.push(
           subscribeUserConversations(user.uid, (list) => {
@@ -464,6 +483,43 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
     [firebaseUser]
   );
 
+  const searchUserDirectory = useCallback(
+    (searchText: string, cursor: UserDirectoryCursor | null = null) => {
+      if (!firebaseUser) {
+        return Promise.reject(new Error('Masuk terlebih dahulu untuk melihat direktori pengguna.'));
+      }
+      return searchUserDirectoryPage(searchText, cursor);
+    },
+    [firebaseUser]
+  );
+
+  const addDirectoryContact = useCallback(
+    async (profile: UserDirectoryProfile) => {
+      if (!firebaseUser) {
+        return { ok: false, message: 'Masuk terlebih dahulu untuk menambahkan kontak.' };
+      }
+      try {
+        await saveUserDirectoryContact(firebaseUser.uid, profile);
+        return { ok: true, message: `${profile.displayName} ditambahkan ke kontak.` };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : 'Gagal menambahkan kontak.',
+        };
+      }
+    },
+    [firebaseUser]
+  );
+
+  const setDirectoryVisibility = useCallback(
+    async (visible: boolean) => {
+      if (!firebaseUser) throw new Error('Masuk terlebih dahulu untuk mengubah visibilitas.');
+      await updateUserDirectoryVisibility(firebaseUser.uid, visible);
+      setDirectoryVisibleState(visible);
+    },
+    [firebaseUser]
+  );
+
   const saveContactAndChat = useCallback(
     async (params: { peer: PhoneDirectoryRecord; contactName: string }) => {
       if (!firebaseUser || !identityKey) {
@@ -476,7 +532,10 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
         const res = await saveContactAndStartDirectChat({
           ownerUid: firebaseUser.uid,
           ownerName: displayName || firebaseUser.displayName || 'Pengguna Handrawina',
-          ownerPhone: phoneNumber,
+          ownerPhone:
+            firebaseUser.phoneNumber ||
+            extractPhoneFromAuthEmail(firebaseUser.email)?.formatted ||
+            '',
           ownerIdentityKey: identityKey,
           peer: params.peer,
           contactName: params.contactName,
@@ -494,7 +553,7 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
         };
       }
     },
-    [firebaseUser, identityKey, displayName, phoneNumber, rawConversations]
+    [firebaseUser, identityKey, displayName, rawConversations]
   );
 
   const openChatWithSavedContact = useCallback(
@@ -811,6 +870,7 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
     rawConversations,
     conversations,
     contacts,
+    directoryVisible,
     unsavedPeerByConv,
     messagesByConv,
     devices,
@@ -825,6 +885,9 @@ export function useFirebaseHandrawina(activeConvId: string): FirebaseHandrawinaS
     signInGoogle,
     signOutUser,
     lookupPhone,
+    searchUserDirectory,
+    addDirectoryContact,
+    setDirectoryVisibility,
     saveContactAndChat,
     openChatWithSavedContact,
     saveUnsavedPeerFromConv,

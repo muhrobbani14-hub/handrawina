@@ -1042,6 +1042,10 @@ export default function App() {
             }}
             businessProducts={effectiveSnapshot.businessProducts}
             contacts={cloud.contacts}
+            directoryVisible={cloud.directoryVisible}
+            onSearchUserDirectory={cloud.searchUserDirectory}
+            onAddDirectoryContact={cloud.addDirectoryContact}
+            onSetDirectoryVisibility={cloud.setDirectoryVisibility}
             unsavedPeer={cloud.unsavedPeerByConv[activeConvId] ?? null}
             onLookupPhone={cloud.lookupPhone}
             onSaveContactAndChat={cloud.saveContactAndChat}

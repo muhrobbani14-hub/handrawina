@@ -89,7 +89,7 @@ service cloud.firestore {
           'navbarTheme', 'backdropPreset', 'backdropIntensity', 'backdropMotion',
           'readReceiptsEnabled', 'typingIndicatorsEnabled', 'disappearingMessages',
           'screenLockEnabled', 'alwaysRelayCallsTurn', 'lowDataCalls',
-          'defaultVideoQuality', 'soundNotifications', 'messagePreview',
+          'defaultVideoQuality', 'soundNotifications', 'messagePreview', 'directoryVisible',
           'autoDownloadMedia', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.uid)
@@ -111,6 +111,10 @@ service cloud.firestore {
         && data.defaultVideoQuality in ['720p', '480p', '360p']
         && data.soundNotifications is bool
         && data.messagePreview is bool
+        && (
+          !data.keys().hasAny(['directoryVisible'])
+          || data.directoryVisible is bool
+        )
         && data.autoDownloadMedia is bool
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -179,8 +183,10 @@ service cloud.firestore {
         && data.ownerUid == request.auth.uid
         && isNonEmptyStr(data.contactName, 80)
         && isNonEmptyStr(data.profileName, 80)
-        && isNonEmptyStr(data.phoneNumber, 32)
-        && isValidPhoneKey(data.phoneKey)
+        && (
+          (data.phoneNumber == '' && data.phoneKey == '')
+          || (isNonEmptyStr(data.phoneNumber, 32) && isValidPhoneKey(data.phoneKey))
+        )
         && isNonEmptyStr(data.initials, 4)
         && isOptStr(data.aboutText, 200)
         && data.fingerprintHex is string && data.fingerprintHex.size() >= 16 && data.fingerprintHex.size() <= 64
@@ -233,6 +239,22 @@ service cloud.firestore {
         && isOptStr(data.publicKeyJwkX, 128)
         && isOptStr(data.publicKeyJwkY, 128)
         && data.online is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserDirectoryEntry(data) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'displayNameLower', 'initials', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'displayNameLower', 'initials', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && isNonEmptyStr(data.displayName, 80)
+        && isNonEmptyStr(data.displayNameLower, 80)
+        && isNonEmptyStr(data.initials, 4)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -556,7 +578,7 @@ service cloud.firestore {
           'readReceiptsEnabled', 'typingIndicatorsEnabled', 'disappearingMessages',
           'screenLockEnabled', 'alwaysRelayCallsTurn', 'lowDataCalls',
           'defaultVideoQuality', 'soundNotifications', 'messagePreview',
-          'autoDownloadMedia', 'updatedAt'
+          'directoryVisible', 'autoDownloadMedia', 'updatedAt'
         ]);
       allow delete: if false;
 
@@ -827,6 +849,37 @@ service cloud.firestore {
           'publicKeyJwkX', 'publicKeyJwkY', 'online', 'updatedAt'
         ]);
       allow delete: if false;
+    }
+
+    // Discoverable profiles contain names only; hidden users delete their directory entry.
+    match /userDirectory/{userId} {
+      allow get: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId;
+      allow list: if isVerifiedUser()
+        && request.query.limit is int
+        && request.query.limit <= 26;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidUserDirectoryEntry(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidUserDirectoryEntry(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'displayNameLower', 'initials', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && existing().uid == request.auth.uid;
     }
 
     // =========================================================

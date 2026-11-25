@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import express from 'express';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
 
 const GROUP_CALL_MAX_PARTICIPANTS = 8;
 const GROUP_CALL_DURATION_SECONDS = 60 * 60;
